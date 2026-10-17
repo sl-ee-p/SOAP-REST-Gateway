@@ -4,7 +4,11 @@ They are deliberately independent of SOAP naming (`sISOCode`, `tLanguage`, ...).
 Models are frozen (immutable) so cached instances can be shared safely between requests.
 """
 
+from typing import Generic, TypeVar
+
 from pydantic import BaseModel, ConfigDict, Field
+
+T = TypeVar("T")
 
 
 class DomainModel(BaseModel):
@@ -41,3 +45,12 @@ class Country(CountrySummary):
         examples=["http://www.oorsprong.org/WebSamples.CountryInfo/Flags/Italy.jpg"],
     )
     languages: list[Language] = Field(default_factory=list)
+
+
+class Page(DomainModel, Generic[T]):
+    """One slice of a collection. Every list endpoint returns this same envelope."""
+
+    items: list[T]
+    total: int = Field(description="Number of items matching the filters, across all pages")
+    limit: int = Field(description="Maximum number of items in this page")
+    offset: int = Field(description="Number of items skipped before this page")

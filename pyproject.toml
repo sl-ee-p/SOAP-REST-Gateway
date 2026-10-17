@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soap-rest-gateway"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A small REST gateway in front of a public SOAP service (CountryInfoService)."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,6 +26,9 @@ dev = [
     "responses>=0.25,<1",
     "ruff>=0.6,<1",
 ]
+
+[tool.setuptools.dynamic]
+version = { attr = "app.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["app*"]

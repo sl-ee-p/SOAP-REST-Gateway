@@ -137,6 +137,7 @@ class SoapCountryInfoGateway:
                 extra={
                     "operation": operation,
                     "error_code": error.code,
+                    "detail": error.detail,
                     "attempts": retrying.statistics.get("attempt_number", 1),
                     "duration_ms": _elapsed_ms(started),
                 },
@@ -183,15 +184,23 @@ def _elapsed_ms(started: float) -> float:
     return round((time.perf_counter() - started) * 1000, 1)
 
 
-def build_gateway(settings: Settings) -> SoapCountryInfoGateway:
-    """Wire a gateway from configuration (used by the app and the smoke script)."""
+def build_gateway(
+    settings: Settings,
+    *,
+    timeout_seconds: float | None = None,
+    max_retries: int | None = None,
+) -> SoapCountryInfoGateway:
+    """Wire a gateway from configuration (used by the app and the smoke script).
+
+    The keyword overrides let the readiness probe use a short timeout and no retries.
+    """
     service = build_service(
         wsdl_path=settings.soap_wsdl_path,
         endpoint_url=settings.soap_endpoint_url,
-        timeout_seconds=settings.soap_timeout_seconds,
+        timeout_seconds=timeout_seconds or settings.soap_timeout_seconds,
     )
     return SoapCountryInfoGateway(
         service,
-        max_retries=settings.soap_max_retries,
+        max_retries=settings.soap_max_retries if max_retries is None else max_retries,
         backoff_seconds=settings.soap_retry_backoff_seconds,
     )
