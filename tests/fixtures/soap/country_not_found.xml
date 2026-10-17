@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <m:FullCountryInfoResponse xmlns:m="http://www.oorsprong.org/websamples.countryinfo">
+      <m:FullCountryInfoResult>
+        <m:sISOCode></m:sISOCode><m:sName>Country not found in the database</m:sName><m:sCapitalCity></m:sCapitalCity>
+        <m:sPhoneCode></m:sPhoneCode><m:sContinentCode></m:sContinentCode><m:sCurrencyISOCode></m:sCurrencyISOCode>
+        <m:sCountryFlag></m:sCountryFlag><m:Languages></m:Languages>
+      </m:FullCountryInfoResult>
+    </m:FullCountryInfoResponse>
+  </soap:Body>
+</soap:Envelope>

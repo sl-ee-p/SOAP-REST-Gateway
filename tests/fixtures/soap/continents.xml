@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <m:ListOfContinentsByCodeResponse xmlns:m="http://www.oorsprong.org/websamples.countryinfo">
+      <m:ListOfContinentsByCodeResult>
+        <m:tContinent><m:sCode>AF</m:sCode><m:sName>Africa</m:sName></m:tContinent>
+        <m:tContinent><m:sCode>EU</m:sCode><m:sName>Europe</m:sName></m:tContinent>
+      </m:ListOfContinentsByCodeResult>
+    </m:ListOfContinentsByCodeResponse>
+  </soap:Body>
+</soap:Envelope>

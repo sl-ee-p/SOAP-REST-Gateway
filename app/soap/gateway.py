@@ -121,7 +121,7 @@ class SoapCountryInfoGateway:
             stop=stop_after_attempt(self._max_retries + 1),
             # 0.2s, 0.4s, 0.8s ... plus random jitter so many clients don't retry in lockstep.
             wait=wait_exponential_jitter(
-                initial=self._backoff_seconds, jitter=self._backoff_seconds, max=2.0
+                multiplier=self._backoff_seconds, jitter=self._backoff_seconds, max=2.0
             ),
             retry=retry_if_exception(_is_transient),
             before_sleep=lambda state: _log_retry(operation, state),

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <m:ListOfCurrenciesByCodeResponse xmlns:m="http://www.oorsprong.org/websamples.countryinfo">
+      <m:ListOfCurrenciesByCodeResult>
+        <m:tCurrency><m:sISOCode></m:sISOCode><m:sName>No Universal Currency</m:sName></m:tCurrency>
+        <m:tCurrency><m:sISOCode>EUR</m:sISOCode><m:sName>Euro</m:sName></m:tCurrency>
+      </m:ListOfCurrenciesByCodeResult>
+    </m:ListOfCurrenciesByCodeResponse>
+  </soap:Body>
+</soap:Envelope>
