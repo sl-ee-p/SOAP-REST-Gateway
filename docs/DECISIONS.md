@@ -478,7 +478,8 @@ the maintenance cost of entry 5 made visible.
 - **`concurrency`:** a newer push cancels the older run on the same branch.
 - **pip cache** keyed on `pyproject.toml`, which has no lock file (see below).
 - The workflow was checked with `actionlint`, and the suite was run locally on 3.11, 3.12 and
-  3.13 in clean environments. The workflow itself has not run on GitHub yet.
+  3.13 in clean environments. Its first real run on GitHub (on the push of `main`) passed in
+  every job.
 
 **Known limitations.** There is no lock file, so CI installs the newest versions allowed by the
 ranges in `pyproject.toml`. That finds breakage from new releases early, but a build is not
@@ -564,5 +565,7 @@ the process runs as uid 10001; the API works through the container, with the rea
 and dropped capabilities; the placeholder key is refused; logs are JSON on stdout; the CI
 smoke-test script passes when run by hand.
 
-Not verified: the GitHub Actions workflow has never run on GitHub (no remote yet). It was checked
-with `actionlint`, and its jobs' commands were run locally.
+The GitHub Actions workflow was checked with `actionlint` and its commands were run locally
+first. Its first real run, on the push of `main`, passed: lint, the tests on Python 3.11, 3.12 and
+3.13, and the Docker build with its container smoke test. The integration job was skipped, as
+designed.

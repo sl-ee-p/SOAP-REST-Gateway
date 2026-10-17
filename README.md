@@ -1,5 +1,7 @@
 # soap-rest-gateway
 
+[![CI](https://github.com/sl-ee-p/SOAP-REST-Gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/sl-ee-p/SOAP-REST-Gateway/actions/workflows/ci.yml)
+
 A small, production-style **REST/JSON API in front of a public SOAP web service**.
 
 It wraps the free [CountryInfoService](http://webservices.oorsprong.org/websamples.countryinfo/CountryInfoService.wso?WSDL)
