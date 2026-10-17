@@ -1,0 +1,17 @@
+services:
+  gateway:
+    build: .
+    image: soap-rest-gateway:latest
+    # Settings (API_KEYS, CACHE_TTL_SECONDS, ...) come from .env, which is never committed.
+    # Create it first: cp .env.example .env
+    env_file: .env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    # Nothing in the app writes to disk, so the container filesystem can be read-only.
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # The image already defines a HEALTHCHECK; `docker compose ps` shows its result.
