@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <m:CountriesUsingCurrencyResponse xmlns:m="http://www.oorsprong.org/websamples.countryinfo">
+      <m:CountriesUsingCurrencyResult>
+        <m:tCountryCodeAndName><m:sISOCode>FR</m:sISOCode><m:sName>France</m:sName></m:tCountryCodeAndName>
+        <m:tCountryCodeAndName><m:sISOCode>IT</m:sISOCode><m:sName>Italy</m:sName></m:tCountryCodeAndName>
+      </m:CountriesUsingCurrencyResult>
+    </m:CountriesUsingCurrencyResponse>
+  </soap:Body>
+</soap:Envelope>

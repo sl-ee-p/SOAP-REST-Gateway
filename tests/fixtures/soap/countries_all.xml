@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <m:FullCountryInfoAllCountriesResponse xmlns:m="http://www.oorsprong.org/websamples.countryinfo">
+      <m:FullCountryInfoAllCountriesResult>
+        <m:tCountryInfo>
+          <m:sISOCode>FR</m:sISOCode><m:sName>France</m:sName><m:sCapitalCity>Paris</m:sCapitalCity>
+          <m:sPhoneCode>33</m:sPhoneCode><m:sContinentCode>EU</m:sContinentCode><m:sCurrencyISOCode>EUR</m:sCurrencyISOCode>
+          <m:sCountryFlag>http://example.test/fr.jpg</m:sCountryFlag>
+          <m:Languages><m:tLanguage><m:sISOCode>fr</m:sISOCode><m:sName>French</m:sName></m:tLanguage></m:Languages>
+        </m:tCountryInfo>
+        <m:tCountryInfo>
+          <m:sISOCode>AQ</m:sISOCode><m:sName>Antarctica</m:sName><m:sCapitalCity></m:sCapitalCity>
+          <m:sPhoneCode></m:sPhoneCode><m:sContinentCode>AN</m:sContinentCode><m:sCurrencyISOCode></m:sCurrencyISOCode>
+          <m:sCountryFlag></m:sCountryFlag><m:Languages></m:Languages>
+        </m:tCountryInfo>
+      </m:FullCountryInfoAllCountriesResult>
+    </m:FullCountryInfoAllCountriesResponse>
+  </soap:Body>
+</soap:Envelope>
