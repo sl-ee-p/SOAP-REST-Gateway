@@ -401,3 +401,94 @@ log (`cache`, `key_id` fields), so one log line shows who called, and whether th
 
 **Note.** Bypass is available to any valid key. It is rate limited like any request, which caps
 how much extra load a client can put on the upstream service.
+
+---
+
+# Phase 4: tests and CI
+
+## 24. Test layout: three kinds of tests, two seams
+
+| Folder | What it tests | What is fake |
+|---|---|---|
+| `tests/unit/` | one class or function at a time: cache, rate limiter, service, SOAP gateway, config, logging | nothing, or only the lowest layer |
+| `tests/api/` | the whole HTTP app through `TestClient`: auth, rate limits, cache headers, errors, status codes | the SOAP gateway (`FakeGateway`) |
+| `tests/integration/` | the real SOAP service | nothing (marked `integration`, off by default) |
+
+There are **two places where the SOAP layer is replaced**, on purpose:
+
+1. **`FakeGateway`** (`tests/fakes.py`) implements the `CountryInfoGateway` port with canned data.
+   API tests use it, so they exercise routing, validation, auth, caching and error mapping
+   without any SOAP or XML. This is what the port from entry 4 buys us.
+2. **`responses` + recorded XML** (`tests/fixtures/soap/*.xml`) fakes the *HTTP layer under zeep*.
+   The SOAP gateway tests therefore run the real zeep, the real WSDL, the real XML parsing, the
+   real field mapping and the real retry logic. Only the network is fake. Mocking zeep itself
+   would test our assumptions about zeep, not the code.
+
+`responses` raises an error for any request without a registered reply, so a test that
+accidentally reached the internet would fail loudly instead of silently depending on it.
+
+## 25. Time is injected, not slept
+
+The cache and the rate limiter take a `clock` function. Tests pass a `FakeClock` and call
+`advance(61)` to expire a TTL or refill a bucket. The suite runs in a few seconds, never
+flakes because of timing, and the retry tests use `backoff_seconds=0` for the same reason.
+
+## 26. What the tests are meant to prove
+
+They are written around behaviour that matters, not around lines of code:
+- **Contract:** status codes, problem+json shape, headers, the pagination envelope, OpenAPI content.
+- **Security:** every `/v1` route rejects missing, wrong, empty and almost-right keys; unauthenticated
+  and rate-limited requests never reach upstream; the raw key never appears in logs; internal error
+  details never reach clients.
+- **Resilience:** which failures are retried (timeouts, connection errors, 502/503/504) and which
+  are not (SOAP faults, 4xx), how many attempts are made, and what each failure becomes.
+- **Upstream quirks:** the "not found is a normal response" case, lower-case codes, the codeless
+  currency, `None` instead of an empty list, empty strings becoming `null`.
+- **Cache:** hit, miss, bypass, TTL expiry, errors not cached, entries shared across filters and keys.
+
+Coverage is a smoke alarm, not a goal: it stands at 100% (statements and branches), CI fails
+below 90%, and the number only means something because of the checks above.
+
+**Mutation check.** To make sure the tests can fail, I deliberately broke the code in seven ways
+(timeout mapped to 500, SOAP faults retried, cache that never stores, auth that accepts any key,
+limiter that never refuses, codes not upper-cased, bypass ignored) and confirmed that each
+one made the suite fail. This was a one-off manual exercise, not an automated tool.
+
+## 27. Integration tests stay out of the default run
+
+`pytest` deselects tests marked `integration` (`addopts = "-m 'not integration'"` in
+`pyproject.toml`); `pytest -m integration` runs only those. They call the real service, so a failure
+can mean "upstream is down" rather than "our code is broken", which is the wrong signal for a
+commit check. In CI they only run when started manually.
+
+One integration test compares the committed WSDL with the live one (ignoring whitespace). If
+the provider changes its contract, that test fails and shows exactly what changed, which is
+the maintenance cost of entry 5 made visible.
+
+## 28. CI pipeline (`.github/workflows/ci.yml`)
+
+- **Triggers:** every push and pull request, plus a manual run (with an option for the
+  integration tests).
+- **`lint` job:** `ruff check` and `ruff format --check`. Linting is its own job so a style error
+  shows up in seconds and is clearly separate from a test failure.
+- **`test` job:** a matrix over Python 3.11, 3.12 and 3.13 (the supported range in `pyproject.toml`)
+  with `fail-fast: false`, so one failing version doesn't hide the others. Runs with `-W error`, so
+  a deprecation warning fails the build instead of piling up.
+- **Least privilege:** `permissions: contents: read`; the jobs can't write to the repository.
+- **`concurrency`:** a newer push cancels the older run on the same branch.
+- **pip cache** keyed on `pyproject.toml`, which has no lock file (see below).
+- The workflow was checked with `actionlint`, and the suite was run locally on 3.11, 3.12 and
+  3.13 in clean environments. The workflow itself has not run on GitHub yet.
+
+**Known limitations.** There is no lock file, so CI installs the newest versions allowed by the
+ranges in `pyproject.toml`. That finds breakage from new releases early, but a build is not
+bit-for-bit reproducible. A lock file (for example `pip-compile` or `uv.lock`) would fix that.
+There are no type checks (mypy/pyright) and no dependency or vulnerability scan yet.
+
+## 29. Things the tests found along the way
+
+- tenacity deprecated the `initial` argument I used for backoff; the `-W error` setting turned the
+  warning into a failure. The code now uses `multiplier`, and `pyproject.toml` requires tenacity
+  9.2 or newer.
+- Starlette's `TestClient` now prefers the `httpx2` package, so the dev dependency changed from
+  `httpx` to `httpx2`.
