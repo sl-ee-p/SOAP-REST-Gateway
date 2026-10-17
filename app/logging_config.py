@@ -7,7 +7,12 @@ Loki, CloudWatch or Datadog can parse without custom regexes.
 import json
 import logging
 import sys
+from contextvars import ContextVar
 from datetime import UTC, datetime
+
+# Set per request by the middleware; added to every log line so all lines that belong to one
+# request (access log, SOAP calls, retries, errors) can be found by one id.
+request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 
 # Attributes every LogRecord has; anything else was passed via `extra=` and is logged as a field.
 _STANDARD_ATTRS = set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) | {
@@ -15,6 +20,12 @@ _STANDARD_ATTRS = set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) 
     "asctime",
     "taskName",
 }
+
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = request_id_var.get()
+        return True
 
 
 class JsonFormatter(logging.Formatter):
@@ -36,6 +47,7 @@ class JsonFormatter(logging.Formatter):
 def configure_logging(level: str = "INFO") -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
+    handler.addFilter(RequestIdFilter())
 
     root = logging.getLogger()
     root.handlers = [handler]
