@@ -58,3 +58,11 @@ def test_app_refuses_to_start_without_api_keys(settings):
 
     with pytest.raises(RuntimeError, match="API_KEYS"):
         create_app(settings.model_copy(update={"api_keys": []}))
+
+
+def test_app_refuses_the_placeholder_key_from_env_example(settings):
+    from app.main import create_app
+
+    placeholder = settings.model_copy(update={"api_keys": ["change-me-to-a-long-random-key"]})
+    with pytest.raises(RuntimeError, match="placeholder"):
+        create_app(placeholder)
