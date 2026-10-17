@@ -1,0 +1,14 @@
+# Production stack, run from /srv/apps/soap-rest-gateway by the deploy job (deploy/deploy.sh).
+# IMAGE is set by the script to the exact tag being deployed; .env holds the secrets.
+services:
+  gateway:
+    image: ${IMAGE:?set by deploy.sh}
+    env_file: .env
+    ports:
+      - "${HOST_PORT:-8083}:8000"
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
