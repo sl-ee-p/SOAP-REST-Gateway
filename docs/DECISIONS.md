@@ -492,3 +492,77 @@ There are no type checks (mypy/pyright) and no dependency or vulnerability scan 
   9.2 or newer.
 - Starlette's `TestClient` now prefers the `httpx2` package, so the dev dependency changed from
   `httpx` to `httpx2`.
+
+---
+
+# Phase 5: Docker and documentation
+
+## 30. Multi-stage Dockerfile
+
+**Decision.** Two stages. The *build* stage installs the app into a virtualenv (`/opt/venv`); the
+*runtime* stage starts from a fresh `python:3.12-slim` and copies only that virtualenv.
+
+**Why.** The final image has no build leftovers, no pip cache and no source tree, only the installed
+package. The app is installed as a normal (non-editable) package, so the WSDL file must ship
+inside it: `pyproject.toml` declares it as package data, and I checked that it ends up in the
+installed package. `COPY pyproject.toml README.md` happens before `COPY app`, so rebuilding after a
+code change doesn't redo the dependency layer's inputs unnecessarily.
+
+**Trade-off.** The image is about 280 MB, mostly because of `lxml` (required by zeep). A distroless
+or Alpine base would be smaller, but Alpine's musl libc makes compiled wheels harder, and the
+extra effort isn't worth it here.
+
+## 31. Container hardening
+
+- **Non-root user** (uid 10001). A bug in the app does not become root inside the container.
+- **`read_only: true`**: the root filesystem is read-only. The app writes nothing to disk (logs
+  go to stdout, caches live in memory, bytecode writing is disabled). I tested that the service
+  starts and serves requests in this mode.
+- **`cap_drop: ALL`** and **`no-new-privileges`**: no Linux capabilities are needed to listen on
+  port 8000, and the process can't gain new ones.
+- **`.dockerignore`** keeps `.env`, `.git`, tests and docs out of the build context, so a
+  local secret can't end up in an image layer (checked: the image contains no `.env`).
+
+## 32. Health check without curl
+
+`python:slim` has no `curl`, and installing it only for a probe adds attack surface. The
+`HEALTHCHECK` runs a one-line Python `urllib` call against `/health` instead. It uses the
+liveness endpoint, not readiness, for the reason in entry 18: an upstream outage must not make
+the container look broken and get restarted. `docker compose ps` shows `healthy` once it passes.
+
+## 33. One worker process
+
+The `CMD` runs a single uvicorn process. The cache and the rate limiter live in process memory
+(entries 21 and 22), so several workers would each have their own copy: the rate limit would be
+multiplied by the worker count and the cache hit rate would drop. Concurrency inside the process
+comes from FastAPI's thread pool (entry 17). Scaling out needs the shared store described in
+those entries.
+
+## 34. Configuration and secrets in Compose
+
+`docker-compose.yml` reads `.env` through `env_file`. Nothing secret is in the image or in the
+repository. If `.env` is missing, Compose stops with a clear "env file not found" error.
+
+`.env.example` is public, so any key written in it is known to everyone. To stop people from
+deploying it by accident, **the app refuses to start if a key begins with `change-me`**
+(`create_app` in `app/main.py`, covered by a test). The README quick start therefore generates a
+random key with `openssl rand -hex 24` and writes only `API_KEYS` to `.env`; every other setting
+has a safe default.
+
+## 35. The README
+
+It is written for a reader who has two minutes: what it is, one command to run it, a diagram of
+the request flow, real curl examples, then the details. The curl examples and error bodies
+were copied from a running container, not written by hand. The Mermaid diagram was parsed with
+Mermaid's own parser (and a deliberately broken diagram was confirmed to be rejected), so GitHub
+should render it.
+
+## 36. What was verified, and what was not
+
+Verified on a real Docker 29.9.1 daemon: the image builds; `docker compose up` reaches `healthy`;
+the process runs as uid 10001; the API works through the container, with the read-only filesystem
+and dropped capabilities; the placeholder key is refused; logs are JSON on stdout; the CI
+smoke-test script passes when run by hand.
+
+Not verified: the GitHub Actions workflow has never run on GitHub (no remote yet). It was checked
+with `actionlint`, and its jobs' commands were run locally.

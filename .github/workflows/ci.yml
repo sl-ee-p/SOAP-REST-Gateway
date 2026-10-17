@@ -53,6 +53,22 @@ jobs:
       # Integration tests are deselected by the default pytest options in pyproject.toml.
       - run: pytest --cov --cov-report=term-missing -W error
 
+  docker:
+    name: Docker image builds and starts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t soap-rest-gateway:ci .
+      - name: Smoke test the container
+        run: |
+          docker run -d --name gateway -e API_KEYS=ci-smoke-key-0123456789abcdef \
+            -p 8000:8000 soap-rest-gateway:ci
+          for i in $(seq 1 30); do curl -fs localhost:8000/health && break; sleep 1; done
+          curl -fs localhost:8000/health
+          echo
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/v1/continents)" = 401
+          docker logs gateway
+
   integration:
     name: Integration (live SOAP service)
     # Only on demand: a third-party sample service must not be able to fail every push.

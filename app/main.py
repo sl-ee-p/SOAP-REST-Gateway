@@ -21,6 +21,8 @@ from app.infra.ratelimit import RateLimiter, TokenBucketRateLimiter
 from app.logging_config import configure_logging
 from app.soap.gateway import build_gateway
 
+PLACEHOLDER_KEY_PREFIX = "change-me"
+
 DESCRIPTION = """
 A clean REST/JSON API in front of the public
 [CountryInfoService](http://webservices.oorsprong.org/websamples.countryinfo/CountryInfoService.wso)
@@ -55,6 +57,11 @@ def create_app(
     if not settings.api_keys:
         # Fail fast: running with no keys would mean either an open API or one nobody can use.
         raise RuntimeError("API_KEYS is not set. Configure at least one key (see .env.example).")
+    if any(key.startswith(PLACEHOLDER_KEY_PREFIX) for key in settings.api_keys):
+        # .env.example is public, so its placeholder key is known to everyone.
+        raise RuntimeError(
+            "API_KEYS still holds the placeholder from .env.example. Generate a real key."
+        )
 
     app = FastAPI(
         title="SOAP → REST Gateway",
