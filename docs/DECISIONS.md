@@ -154,3 +154,149 @@ only the environment changes.
 
 **Alternatives.** `structlog` or `python-json-logger` are good libraries, but the standard
 library is enough here and leaves one less dependency to explain.
+
+---
+
+# Phase 2: REST endpoints
+
+## 11. URL design and versioning
+
+**Decision.** Plural nouns for resources and nesting only where there is a real relationship.
+Every endpoint is a `GET` because the upstream is read-only:
+
+```
+GET /v1/countries            ?continent=EU&currency=EUR&q=land&limit=50&offset=0
+GET /v1/countries/{code}
+GET /v1/continents
+GET /v1/currencies
+GET /v1/currencies/{code}/countries
+GET /health   GET /health/ready
+```
+
+The `/v1` prefix in the URL means a future breaking change can live at `/v2` while existing
+clients keep working. It's the most visible versioning style and the easiest to curl. Health
+probes are not versioned: they're for infrastructure, not API clients.
+
+**Alternatives.** Versioning through a header (`Accept: application/vnd...+json;version=1`) keeps
+URLs cleaner, but it's harder to try in a browser and easy to forget.
+
+## 12. One pagination envelope for every list
+
+**Decision.** Every collection returns the same shape:
+`{"items": [...], "total": 246, "limit": 50, "offset": 0}`. Pagination uses `limit`/`offset`
+(max 250).
+
+**Why.**
+- One shape everywhere means clients write one pagination helper. Even the 6 continents use it,
+  so adding fields later doesn't break anyone.
+- `total` lets a UI show "page 2 of 5".
+- Offset pagination is simple and fits small, stable data that is fetched in full.
+
+**How.** The upstream has no filtering or paging. `FullCountryInfoAllCountries` returns all 246
+countries in one call, so `app/domain/service.py` filters, sorts (by name or code, so pages are
+stable) and slices the list in memory. Phase 3 caches that full list, so a page request rarely
+reaches upstream at all.
+
+**Trade-off.** With millions of rows or data that changes often, offset paging gets slow and can
+skip or repeat items. Cursor (keyset) pagination would be the right tool then.
+
+## 13. Domain models double as response schemas
+
+**Decision.** Routes return domain models (`Country`, `Page[Country]`) directly, and FastAPI
+generates the OpenAPI schema from them. `app/api/schemas.py` only holds API-specific shapes
+(errors and health).
+
+**Trade-off.** A change to a domain model changes the public API. That's fine at this size, where
+they are the same thing. In a bigger system, separate API DTOs would let the two evolve
+independently, at the cost of mapping code.
+
+## 14. Errors: RFC 9457 Problem Details
+
+**Decision.** Every error, whether from a domain error, a validation error, an unknown route or a
+bug, returns `application/problem+json`:
+
+```json
+{"type": "about:blank", "title": "Not Found", "status": 404,
+ "detail": "Country 'ZZ' was not found", "instance": "/v1/countries/ZZ",
+ "code": "not_found", "request_id": "9f1c..."}
+```
+
+- `code` is a stable machine-readable string (`not_found`, `validation_error`,
+  `upstream_timeout`, ...). Clients should branch on `code`, never parse `detail`.
+- `request_id` lets a user report "it failed" and lets us find the exact log lines.
+- Validation errors (422) add an `errors` list showing which field failed and why.
+
+**Status code mapping** (one table in `app/api/errors.py`):
+
+| Situation | Status | Why this status |
+|---|---|---|
+| bad input (`/countries/ITA`, `limit=0`) | 422 | FastAPI/Pydantic convention for a well-formed request with invalid values |
+| unknown country / currency | 404 | the resource doesn't exist |
+| SOAP Fault, unparseable response | 502 Bad Gateway | upstream answered, but wrongly |
+| upstream unreachable | 503 Service Unavailable | temporary, retry later |
+| upstream too slow | 504 Gateway Timeout | the standard status for exactly this case |
+| bug in our code | 500 | generic body; the traceback is only logged |
+
+**Not leaking internals.** For upstream and unexpected errors, clients get a generic sentence.
+The real detail (SOAP operation name, fault text, traceback) goes to the logs under the same
+`request_id`. Internal details are useless to clients and can help an attacker.
+
+**Known limitation.** FastAPI lists the error schema under both `application/problem+json` and
+`application/json` in the OpenAPI document. Real responses always use
+`application/problem+json`.
+
+## 15. Validate at the edge, normalise for the user
+
+**Decision.** Path and query parameters have strict patterns (`^[A-Za-z]{2}$` for countries,
+`^[A-Za-z]{3}$` for currencies, `limit` 1–250). Bad input is rejected with 422 before any
+upstream call. Matching is case-insensitive: `/v1/countries/it` works, because the gateway
+uppercases codes.
+
+**Why.** Rejecting early avoids pointless upstream calls and gives clearer errors. Accepting
+any case is friendlier and costs nothing.
+
+## 16. Request IDs and access logging
+
+**Decision.** `app/api/middleware.py`:
+- reuses the caller's `X-Request-ID` if it is safe (max 128 chars of `[A-Za-z0-9._-]`), otherwise
+  generates one, and returns it as a response header;
+- stores it in a `ContextVar`, which the logging filter adds to *every* log line (SOAP calls,
+  retries, errors), not just the access log;
+- writes one access-log line per request: method, path, status, duration, client;
+- is the last safety net: an unexpected exception is logged with its traceback and turned into a
+  generic 500 problem response.
+
+**Why validate the incoming id?** It ends up in logs and headers. Accepting arbitrary text
+would allow log injection (fake log lines) or oversized headers.
+
+## 17. Synchronous routes (`def`, not `async def`)
+
+**Context.** zeep's normal client is synchronous (blocking). Calling blocking code inside an
+`async def` route would freeze the whole event loop for every user.
+
+**Decision.** Routes are plain `def`. FastAPI automatically runs them in a thread pool, so a slow
+SOAP call blocks only its own thread. Context variables are copied into that thread, which is
+why the SOAP log lines still carry the request id.
+
+**Alternatives.** zeep has an `AsyncClient` (built on httpx). That would scale better under very
+high concurrency, but it makes the code, retries and tests more complex. The thread pool
+(40 threads by default) is more than enough for this service.
+
+## 18. Liveness vs readiness
+
+**Decision.** Two probes:
+- `GET /health` (liveness) answers "is the process alive?" and never calls upstream. If upstream
+  is down, restarting our container would not help, so liveness must stay green.
+- `GET /health/ready` (readiness) answers "can we serve requests?" by making one cheap SOAP call,
+  using its own gateway with a 2s timeout (`HEALTH_CHECK_TIMEOUT_SECONDS`) and no retries, so a
+  probe never hangs. It returns 200 `ready` or 503 `unavailable` with the error code.
+
+Both are public (no API key): load balancers and orchestrators must be able to call them.
+
+## 19. Application factory
+
+**Decision.** `create_app(settings=None, gateway=None)` in `app/main.py` builds the app instead of
+creating it at import time. Run it with `uvicorn app.main:create_app --factory`.
+
+**Why.** Tests can build an app with their own settings and a fake gateway, with no
+monkey-patching and no global state shared between tests.
