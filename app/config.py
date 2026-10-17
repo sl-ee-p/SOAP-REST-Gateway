@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     # The readiness probe must answer quickly, so it uses its own short timeout and no retries.
     health_check_timeout_seconds: float = Field(default=2.0, gt=0)
 
+    # Response cache (in-memory, per process). A TTL of 0 disables caching.
+    cache_ttl_seconds: float = Field(default=300.0, ge=0)
+    cache_max_entries: int = Field(default=1024, ge=1)
+
+    # Rate limit per API key: sustained requests per minute, and how many may arrive at once.
+    rate_limit_per_minute: int = Field(default=60, ge=1)
+    rate_limit_burst: int = Field(default=20, ge=1)
+
     # Security: comma-separated list in the environment, e.g. API_KEYS=key-one,key-two.
     # NoDecode stops pydantic-settings from expecting JSON, so the validator below can split it.
     api_keys: Annotated[list[str], NoDecode] = Field(default_factory=list)
