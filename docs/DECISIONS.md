@@ -300,3 +300,104 @@ creating it at import time. Run it with `uvicorn app.main:create_app --factory`.
 
 **Why.** Tests can build an app with their own settings and a fake gateway, with no
 monkey-patching and no global state shared between tests.
+
+---
+
+# Phase 3: authentication, rate limiting, caching
+
+## 20. API-key authentication
+
+**Decision.** Clients send a key in the `X-API-Key` header. Valid keys come from the `API_KEYS`
+environment variable (comma-separated). No key is stored in code or in the repo, and the app
+**refuses to start** if `API_KEYS` is empty: an app with no keys is either open to everyone or
+unusable, and both are mistakes worth catching at startup.
+
+**Details worth knowing.**
+- Keys are compared with `hmac.compare_digest`, against every configured key with no early exit.
+  A plain `==` returns faster the sooner two strings differ, which in theory lets an attacker guess
+  a key character by character from response times.
+- A missing or wrong key gives `401` with `WWW-Authenticate: ApiKey` and the usual problem+json
+  body. The two cases look identical, so a client can't tell "no such key" from "typo".
+- Logs and rate-limit buckets use a **key id**: the first 12 hex characters of the key's SHA-256.
+  It identifies a client in the logs without the log ever containing the key.
+- The check is a FastAPI dependency on the `/v1` router, so a new route is protected by default.
+  `/health`, `/docs` and `/openapi.json` are public on purpose (probes and documentation).
+  The OpenAPI document declares the `X-API-Key` scheme, so the docs page has an "Authorize" button.
+
+**Alternatives.** `Authorization: Bearer` is for tokens that identify a user and expire (OAuth/JWT).
+Simple static keys for machine clients are normally sent in a custom header. A real deployment
+would store hashed keys in a database with per-key metadata and revocation; environment
+variables are the simplest thing that is safe for a demo.
+
+**Known limitation.** Rotating a key means changing the environment and restarting.
+
+## 21. Rate limiting: token bucket per key
+
+**Decision.** `app/infra/ratelimit.py`. Each key has a bucket of `RATE_LIMIT_BURST` tokens (default
+20) that refills at `RATE_LIMIT_PER_MINUTE` (default 60) per minute. A request costs one token.
+When the bucket is empty the answer is `429 Too Many Requests` with a `Retry-After` header. Every
+successful response carries `X-RateLimit-Limit` and `X-RateLimit-Remaining`.
+
+**Why a token bucket.** It allows short bursts (a page that fires 10 calls at once) while still
+enforcing the average rate. A fixed window ("60 per calendar minute") lets a client send 60 requests
+at 0:59 and 60 more at 1:00.
+
+**Details.**
+- Rate limiting runs *after* authentication, so each bucket belongs to a known key. Unauthenticated
+  requests are rejected cheaply with 401 and are not limited per key; a production system would
+  also limit by IP at the proxy.
+- The clock is injected, so tests can move time forward instead of sleeping.
+- The limiter hides behind a `RateLimiter` Protocol with one method.
+
+**Known limitation.** State is **in memory and per process**. With 4 workers, a client could
+get up to 4× the limit, and a restart resets all buckets. For a multi-worker deployment the bucket
+moves to Redis (atomic Lua script or `INCR` + `EXPIRE`); only the class behind the Protocol changes.
+
+## 22. Response cache: cache-aside, wrapped around the gateway
+
+**Decision.** `CachedCountryInfoGateway` (`app/infra/cached_gateway.py`) wraps the gateway port.
+For each call it looks in the cache first, and on a miss calls upstream and stores the result for
+`CACHE_TTL_SECONDS` (default 300; `0` disables caching). This is the **cache-aside** pattern.
+The business service doesn't know the cache exists.
+
+**Why cache raw upstream data, not final responses?**
+- The country list is the same for every filter and page. `/v1/countries?continent=EU`,
+  `?q=land` and page 2 all reuse one cached upstream call (checked: one `MISS`, then `HIT`s).
+  Caching whole responses would create one entry per query string and mostly miss.
+- Country data changes very rarely, so five minutes is cheap and safe. It also protects a
+  slow sample service from our traffic.
+
+**Details.**
+- Cache keys are shared by all API keys. The data is public and identical for everyone; there is
+  nothing per-user in it.
+- Errors are never cached, so one failed call doesn't make the failure last for the TTL.
+- The cache holds frozen models. Lists are copied on the way out so a caller can't change what
+  is stored.
+- The cache is bounded (`CACHE_MAX_ENTRIES`, default 1024): when full, expired entries are
+  removed first, then the oldest one.
+- Everything is guarded by a lock, because requests run in several threads (see entry 17).
+
+**Known limitations.**
+- In-memory and per process, like the rate limiter; the `Cache` Protocol (get/set/clear) is the
+  seam for Redis.
+- No request coalescing: if 10 requests miss at the same moment, 10 upstream calls happen
+  ("thundering herd"). With a 5 minute TTL and a tiny dataset this is acceptable.
+
+## 23. Cache bypass and visibility
+
+**Decision.** A client sends the standard request header `Cache-Control: no-cache` to skip the
+cache. The result is also written back, so the next normal request sees fresh data. Every cached
+route replies with `X-Cache: HIT`, `MISS` or `BYPASS`.
+
+**Why standard HTTP instead of a custom header.** `no-cache` already means "revalidate before
+using a stored copy", so clients, browsers and proxies understand it. It needs no documentation
+beyond one sentence.
+
+**How it works.** The middleware creates a small `CacheTrace` object per request and stores it
+in a `ContextVar`; the cached gateway updates it. A mutable object is used because routes run in
+a worker thread, and a `ContextVar.set()` made inside that thread would not be visible to the
+middleware afterwards, whereas changes to a shared object are. The same trace feeds the access
+log (`cache`, `key_id` fields), so one log line shows who called, and whether the cache helped.
+
+**Note.** Bypass is available to any valid key. It is rate limited like any request, which caps
+how much extra load a client can put on the upstream service.
