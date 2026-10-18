@@ -202,3 +202,54 @@ def test_build_gateway_overrides_win_over_settings(rsps):
     with pytest.raises(UpstreamBadResponse):
         build_gateway(settings, timeout_seconds=0.5, max_retries=0).list_continents()
     assert len(rsps.calls) == 1  # readiness probe: no retries
+
+
+# --- malformed upstream data ---------------------------------------------------------------
+
+
+def envelope(operation: str, result: str, prolog: str = "") -> str:
+    """A minimal SOAP response for `operation` whose Result element holds `result`."""
+    return (
+        f'<?xml version="1.0" encoding="utf-8"?>{prolog}'
+        '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"'
+        ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><soap:Body>'
+        f'<m:{operation}Response xmlns:m="http://www.oorsprong.org/websamples.countryinfo">'
+        f"<m:{operation}Result>{result}</m:{operation}Result>"
+        f"</m:{operation}Response></soap:Body></soap:Envelope>"
+    )
+
+
+def test_record_with_a_missing_required_field_is_a_bad_response_not_a_crash(gateway, rsps):
+    body = envelope("ListOfContinentsByCode", "<m:tContinent><m:sCode>AF</m:sCode></m:tContinent>")
+    rsps.post(ENDPOINT, body=body, content_type="text/xml")
+    with pytest.raises(UpstreamBadResponse, match="incomplete record"):
+        gateway.list_continents()
+
+
+def test_country_with_a_code_but_no_name_is_a_bad_response(gateway, rsps):
+    body = envelope("FullCountryInfo", "<m:sISOCode>IT</m:sISOCode>")
+    rsps.post(ENDPOINT, body=body, content_type="text/xml")
+    with pytest.raises(UpstreamBadResponse):
+        gateway.get_country("IT")
+
+
+def test_malformed_record_is_a_502_through_the_api(rsps):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+    from tests.conftest import API_KEY
+
+    settings = Settings(
+        _env_file=None,
+        api_keys=[API_KEY],
+        soap_endpoint_url=ENDPOINT,
+        soap_max_retries=0,
+        log_level="CRITICAL",
+    )
+    body = envelope("ListOfContinentsByCode", "<m:tContinent><m:sCode>AF</m:sCode></m:tContinent>")
+    rsps.post(ENDPOINT, body=body, content_type="text/xml")
+    response = TestClient(create_app(settings)).get(
+        "/v1/continents", headers={"X-API-Key": API_KEY}
+    )
+    assert response.status_code == 502
+    assert response.json()["code"] == "upstream_bad_response"

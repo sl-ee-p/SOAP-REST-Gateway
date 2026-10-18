@@ -9,10 +9,12 @@ Responsibilities, and nothing else:
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any, TypeVar
 
 import requests
+from pydantic import ValidationError
 from tenacity import (
     RetryCallState,
     Retrying,
@@ -82,35 +84,45 @@ class SoapCountryInfoGateway:
     def get_country(self, code: str) -> Country:
         # Quirk: the service only matches upper-case codes ("it" is "not found").
         code = code.strip().upper()
-        result = self._call("FullCountryInfo", sCountryISOCode=code)
+        operation = "FullCountryInfo"
+        result = self._call(operation, sCountryISOCode=code)
         # Quirk: an unknown code is not a SOAP Fault. The service returns a normal response
         # whose name is "Country not found in the database" and whose code is empty.
         if result is None or not result.sISOCode:
             raise NotFound(f"Country '{code}' was not found")
-        return _to_country(result)
+        with _mapping(operation):
+            return _to_country(result)
 
     def list_countries(self) -> list[Country]:
-        return [_to_country(item) for item in self._call("FullCountryInfoAllCountries") or []]
+        operation = "FullCountryInfoAllCountries"
+        result = self._call(operation)
+        with _mapping(operation):
+            return [_to_country(item) for item in result or []]
 
     def list_continents(self) -> list[Continent]:
-        return [
-            Continent(code=item.sCode, name=item.sName)
-            for item in self._call("ListOfContinentsByCode") or []
-        ]
+        operation = "ListOfContinentsByCode"
+        result = self._call(operation)
+        with _mapping(operation):
+            return [Continent(code=item.sCode, name=item.sName) for item in result or []]
 
     def list_currencies(self) -> list[Currency]:
-        return [
-            Currency(code=item.sISOCode, name=item.sName)
-            for item in self._call("ListOfCurrenciesByCode") or []
-            # Quirk: the list contains a placeholder "No Universal Currency" with no code.
-            if item.sISOCode
-        ]
+        operation = "ListOfCurrenciesByCode"
+        result = self._call(operation)
+        with _mapping(operation):
+            return [
+                Currency(code=item.sISOCode, name=item.sName)
+                for item in result or []
+                # Quirk: the list contains a placeholder "No Universal Currency" with no code.
+                if item.sISOCode
+            ]
 
     def countries_using_currency(self, currency_code: str) -> list[CountrySummary]:
         code = currency_code.strip().upper()
+        operation = "CountriesUsingCurrency"
         # Quirk: an unknown currency returns nothing at all (None), not an empty list.
-        result = self._call("CountriesUsingCurrency", sISOCurrencyCode=code) or []
-        return [CountrySummary(code=item.sISOCode, name=item.sName) for item in result]
+        result = self._call(operation, sISOCurrencyCode=code)
+        with _mapping(operation):
+            return [CountrySummary(code=item.sISOCode, name=item.sName) for item in result or []]
 
     # --- internals ----------------------------------------------------------------------
 
@@ -152,6 +164,24 @@ class SoapCountryInfoGateway:
             },
         )
         return result
+
+
+@contextmanager
+def _mapping(operation: str) -> Iterator[None]:
+    """Turn a response that doesn't fit the domain models into UpstreamBadResponse.
+
+    A record with a missing required field (zeep maps it to None) is upstream's fault, so the
+    client must get a 502, not a 500 that suggests a bug in this service.
+    """
+    try:
+        yield
+    except ValidationError as exc:
+        error = UpstreamBadResponse(f"{operation}: upstream returned an incomplete record")
+        logger.warning(
+            "soap_response_invalid",
+            extra={"operation": operation, "error_code": error.code, "detail": str(exc)},
+        )
+        raise error from exc
 
 
 def _to_country(item: Any) -> Country:
