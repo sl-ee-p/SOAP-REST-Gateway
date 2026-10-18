@@ -22,6 +22,8 @@ from app.logging_config import configure_logging
 from app.soap.gateway import build_gateway
 
 PLACEHOLDER_KEY_PREFIX = "change-me"
+# Short keys can be guessed; `secrets.token_urlsafe(32)` gives 43 characters.
+MIN_API_KEY_LENGTH = 16
 
 DESCRIPTION = """
 A clean REST/JSON API in front of the public
@@ -61,6 +63,10 @@ def create_app(
         # .env.example is public, so its placeholder key is known to everyone.
         raise RuntimeError(
             "API_KEYS still holds the placeholder from .env.example. Generate a real key."
+        )
+    if any(len(key) < MIN_API_KEY_LENGTH for key in settings.api_keys):
+        raise RuntimeError(
+            f"Every key in API_KEYS must be at least {MIN_API_KEY_LENGTH} characters long."
         )
 
     app = FastAPI(

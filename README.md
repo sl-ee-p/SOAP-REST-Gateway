@@ -32,8 +32,8 @@ export KEY=$(grep ^API_KEYS= .env | cut -d= -f2)
 curl -s -H "X-API-Key: $KEY" localhost:8000/v1/countries/IT
 ```
 
-`.env.example` lists every setting. The app refuses to start without a key, and refuses the
-`change-me...` placeholder from that file.
+`.env.example` lists every setting. The app refuses to start without a key, refuses keys
+shorter than 16 characters, and refuses the `change-me...` placeholder from that file.
 
 ## How a request flows
 
@@ -159,7 +159,7 @@ Settings come from environment variables (or `.env`). Only `API_KEYS` is require
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `API_KEYS` | none | Comma-separated list of accepted keys |
+| `API_KEYS` | none | Comma-separated list of accepted keys (each at least 16 characters) |
 | `CACHE_TTL_SECONDS` | `300` | How long upstream data is cached (`0` disables it) |
 | `CACHE_MAX_ENTRIES` | `1024` | Cache size limit |
 | `RATE_LIMIT_PER_MINUTE` | `60` | Sustained requests per minute, per key |
@@ -169,7 +169,7 @@ Settings come from environment variables (or `.env`). Only `API_KEYS` is require
 | `SOAP_RETRY_BACKOFF_SECONDS` | `0.2` | Base delay for exponential backoff with jitter |
 | `HEALTH_CHECK_TIMEOUT_SECONDS` | `2` | Timeout of the readiness probe |
 | `SOAP_ENDPOINT_URL` | the public service | Where SOAP calls are sent |
-| `LOG_LEVEL` | `INFO` | Log verbosity |
+| `LOG_LEVEL` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL` |
 
 Logs are one JSON object per line on stdout, with the `request_id` on every line that belongs to a request.
 
