@@ -14,10 +14,12 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same branch makes the older, still-running run pointless.
+# A newer push to the same branch makes the older, still-running run pointless. Not on main:
+# there a run may be publishing or deploying, and cancelling the whole run would stop the
+# deploy job halfway (its own job-level concurrency cannot prevent a run-level cancel).
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   lint:
@@ -67,7 +69,9 @@ jobs:
           curl -fs localhost:8000/health
           echo
           test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/v1/continents)" = 401
-          docker logs gateway
+      - name: Container logs
+        if: always()
+        run: docker logs gateway || true
 
   integration:
     name: Integration (live SOAP service)
@@ -126,9 +130,17 @@ jobs:
       packages: read
     steps:
       - uses: actions/checkout@v4
+      # The token goes through the environment, not into the script text, and the login is
+      # removed afterwards: this runner is a long-lived machine, not a throwaway VM.
       - name: Log in to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
       - name: Deploy
         run: deploy/deploy.sh
         env:
           IMAGE: ${{ needs.publish.outputs.image }}
+      - name: Log out of GHCR
+        if: always()
+        run: docker logout ghcr.io
