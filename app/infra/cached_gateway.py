@@ -8,7 +8,7 @@ upstream data) means every filter/page combination of /v1/countries shares one c
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import TypeVar, cast
 
 from app.domain.models import Continent, Country, CountrySummary, Currency
 from app.domain.ports import CountryInfoGateway
@@ -89,4 +89,4 @@ class CachedCountryInfoGateway:
 
 def _copy(value: T) -> T:
     # Models are frozen, but lists are not: hand out a copy so a caller can't alter the cache.
-    return list(value) if isinstance(value, list) else value
+    return cast(T, list(value)) if isinstance(value, list) else value

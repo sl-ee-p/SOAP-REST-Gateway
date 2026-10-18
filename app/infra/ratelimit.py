@@ -5,6 +5,7 @@ per second. A request spends one token; with none left it is refused. This allow
 bursts while enforcing the average rate.
 """
 
+import math
 import threading
 import time
 from collections.abc import Callable
@@ -47,4 +48,4 @@ class TokenBucketRateLimiter:
                 return RateLimitResult(True, self._burst, int(tokens - 1), 0)
             self._buckets[key] = (tokens, now)
             wait = (1 - tokens) / self._refill_per_second
-            return RateLimitResult(False, self._burst, 0, max(1, int(wait) + 1))
+            return RateLimitResult(False, self._burst, 0, max(1, math.ceil(wait)))

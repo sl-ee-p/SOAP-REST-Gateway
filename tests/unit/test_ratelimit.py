@@ -37,3 +37,11 @@ def test_keys_have_independent_buckets(clock: FakeClock):
     assert limiter.check("a").allowed
     assert not limiter.check("a").allowed
     assert limiter.check("b").allowed
+
+
+def test_retry_after_is_the_exact_ceiling_of_the_wait(clock: FakeClock):
+    limiter = TokenBucketRateLimiter(per_minute=30, burst=1, clock=clock)  # 1 token / 2s
+    limiter.check("a")
+    assert limiter.check("a").retry_after_seconds == 2  # not 3: the token is back after 2s
+    clock.advance(0.5)
+    assert limiter.check("a").retry_after_seconds == 2  # 1.5s left, rounded up

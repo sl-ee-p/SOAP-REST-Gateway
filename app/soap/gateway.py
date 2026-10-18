@@ -63,7 +63,7 @@ def _translate(exc: Exception, operation: str) -> UpstreamError:
         return UpstreamUnavailable(f"{operation}: upstream service is unreachable")
     if isinstance(exc, zeep_exc.Fault):
         return UpstreamFault(f"{operation}: upstream returned a SOAP fault: {exc.message}")
-    if isinstance(exc, zeep_exc.TransportError):
+    if isinstance(exc, zeep_exc.TransportError) and exc.status_code >= 400:
         return UpstreamBadResponse(f"{operation}: upstream returned HTTP {exc.status_code}")
     return UpstreamBadResponse(f"{operation}: upstream returned an unexpected response")
 

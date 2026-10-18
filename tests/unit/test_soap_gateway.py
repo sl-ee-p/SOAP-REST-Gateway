@@ -174,6 +174,12 @@ def test_unparseable_response_becomes_bad_response(gateway, rsps):
         gateway.list_continents()
 
 
+def test_empty_200_response_is_reported_as_invalid_not_as_an_http_error(gateway, rsps):
+    rsps.post(ENDPOINT, body="", status=200, content_type="text/xml")
+    with pytest.raises(UpstreamBadResponse, match="unexpected response"):
+        gateway.list_continents()
+
+
 def test_unexpected_exception_from_the_client_becomes_bad_response():
     class BrokenService:
         def ListOfContinentsByCode(self):  # noqa: N802 - mirrors the SOAP operation name
