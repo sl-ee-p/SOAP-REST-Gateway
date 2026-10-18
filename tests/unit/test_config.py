@@ -29,6 +29,18 @@ def test_log_level_is_uppercased():
     assert make(log_level="debug").log_level == "DEBUG"
 
 
+def test_unknown_log_level_fails_at_startup():
+    # Without validation this only failed later, inside logging.setLevel().
+    with pytest.raises(ValidationError, match="log_level"):
+        make(log_level="verbose")
+
+
+def test_api_keys_are_not_in_the_settings_repr():
+    settings = make(api_keys=["super-secret-key-0123456789"])
+    assert "super-secret" not in repr(settings)
+    assert "super-secret" not in str(settings)
+
+
 @pytest.mark.parametrize(
     "field, value",
     [("soap_timeout_seconds", 0), ("soap_max_retries", 99), ("rate_limit_burst", 0)],

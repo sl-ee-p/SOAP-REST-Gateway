@@ -32,8 +32,8 @@ export KEY=$(grep ^API_KEYS= .env | cut -d= -f2)
 curl -s -H "X-API-Key: $KEY" localhost:8000/v1/countries/IT
 ```
 
-`.env.example` lists every setting. The app refuses to start without a key, and refuses the
-`change-me...` placeholder from that file.
+`.env.example` lists every setting. The app refuses to start without a key, refuses keys
+shorter than 16 characters, and refuses the `change-me...` placeholder from that file.
 
 ## How a request flows
 
@@ -159,7 +159,7 @@ Settings come from environment variables (or `.env`). Only `API_KEYS` is require
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `API_KEYS` | none | Comma-separated list of accepted keys |
+| `API_KEYS` | none | Comma-separated list of accepted keys (each at least 16 characters) |
 | `CACHE_TTL_SECONDS` | `300` | How long upstream data is cached (`0` disables it) |
 | `CACHE_MAX_ENTRIES` | `1024` | Cache size limit |
 | `RATE_LIMIT_PER_MINUTE` | `60` | Sustained requests per minute, per key |
@@ -169,7 +169,7 @@ Settings come from environment variables (or `.env`). Only `API_KEYS` is require
 | `SOAP_RETRY_BACKOFF_SECONDS` | `0.2` | Base delay for exponential backoff with jitter |
 | `HEALTH_CHECK_TIMEOUT_SECONDS` | `2` | Timeout of the readiness probe |
 | `SOAP_ENDPOINT_URL` | the public service | Where SOAP calls are sent |
-| `LOG_LEVEL` | `INFO` | Log verbosity |
+| `LOG_LEVEL` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL` |
 
 Logs are one JSON object per line on stdout, with the `request_id` on every line that belongs to a request.
 
@@ -181,17 +181,17 @@ pip install -e '.[dev]'
 
 API_KEYS=dev-key-change-me-1234 uvicorn app.main:create_app --factory --reload   # run locally
 
-pytest                          # 139 tests, no network needed
+pytest                          # unit and API tests, no network needed
 pytest --cov                    # with coverage (CI requires at least 90%)
 pytest -m integration           # a few tests against the live SOAP service
-ruff check . && ruff format --check .
+ruff check . && ruff format --check . && mypy
 ```
 
 The tests never depend on the live service. API tests replace the SOAP layer with an in-memory
 fake. SOAP-layer tests run the real zeep and WSDL against recorded XML responses, with only the
 HTTP layer faked. The integration tests are excluded from the default run, and CI runs them
-only when started manually. GitHub Actions runs lint and the tests on Python 3.11, 3.12 and
-3.13 for every push.
+only when started manually. GitHub Actions runs lint (ruff), type checking (mypy) and the
+tests on Python 3.11, 3.12 and 3.13 for every push.
 
 ## Project layout
 
@@ -216,7 +216,7 @@ These are deliberate simplifications for a demo, each explained in `docs/DECISIO
 - The cache and rate limiter are **in memory and per process**, so the container runs one worker. Scaling out needs a shared store such as Redis (both sit behind small interfaces for that reason).
 - API keys come from environment variables. Rotating one means a restart.
 - The upstream service only answers over plain HTTP, so traffic to it is not encrypted. The data is public and read-only.
-- No lock file, type checking or dependency scan yet.
+- No lock file or dependency scan yet.
 
 ## License
 

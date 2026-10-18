@@ -115,6 +115,8 @@ failure into one of these errors:
 | timeout (after retries) | `UpstreamTimeout` | `upstream_timeout` |
 | cannot connect (DNS, refused) | `UpstreamUnavailable` | `upstream_unavailable` |
 | HTTP error / unparseable XML | `UpstreamBadResponse` | `upstream_bad_response` |
+| record missing a required field | `UpstreamBadResponse` | `upstream_bad_response` |
+| XML with a DTD or entities (entry 37) | `UpstreamBadResponse` | `upstream_bad_response` |
 
 The API layer (phase 2) maps these to HTTP status codes in one place. The SOAP code never
 mentions HTTP statuses, and the routes never mention zeep.
@@ -318,6 +320,9 @@ unusable, and both are mistakes worth catching at startup.
   a key character by character from response times.
 - A missing or wrong key gives `401` with `WWW-Authenticate: ApiKey` and the usual problem+json
   body. The two cases look identical, so a client can't tell "no such key" from "typo".
+- The app also refuses to start with a key shorter than 16 characters, or with the
+  `change-me...` placeholder from `.env.example`. The keys are excluded from the settings'
+  `repr()`, so printing the settings object can't leak them.
 - Logs and rate-limit buckets use a **key id**: the first 12 hex characters of the key's SHA-256.
   It identifies a client in the logs without the log ever containing the key.
 - The check is a FastAPI dependency on the `/v1` router, so a new route is protected by default.
@@ -469,13 +474,15 @@ the maintenance cost of entry 5 made visible.
 
 - **Triggers:** every push and pull request, plus a manual run (with an option for the
   integration tests).
-- **`lint` job:** `ruff check` and `ruff format --check`. Linting is its own job so a style error
+- **`lint` job:** `ruff check`, `ruff format --check` and `mypy`. Linting is its own job so a style error
   shows up in seconds and is clearly separate from a test failure.
 - **`test` job:** a matrix over Python 3.11, 3.12 and 3.13 (the supported range in `pyproject.toml`)
   with `fail-fast: false`, so one failing version doesn't hide the others. Runs with `-W error`, so
   a deprecation warning fails the build instead of piling up.
 - **Least privilege:** `permissions: contents: read`; the jobs can't write to the repository.
-- **`concurrency`:** a newer push cancels the older run on the same branch.
+- **`concurrency`:** a newer push cancels the older run on the same branch, except on `main`,
+  where a run may be in the middle of publishing or deploying (cancelling the run would stop
+  the deploy job halfway, whatever the job's own concurrency settings say).
 - **pip cache** keyed on `pyproject.toml`, which has no lock file (see below).
 - The workflow was checked with `actionlint`, and the suite was run locally on 3.11, 3.12 and
   3.13 in clean environments. Its first real run on GitHub (on the push of `main`) passed in
@@ -484,7 +491,7 @@ the maintenance cost of entry 5 made visible.
 **Known limitations.** There is no lock file, so CI installs the newest versions allowed by the
 ranges in `pyproject.toml`. That finds breakage from new releases early, but a build is not
 bit-for-bit reproducible. A lock file (for example `pip-compile` or `uv.lock`) would fix that.
-There are no type checks (mypy/pyright) and no dependency or vulnerability scan yet.
+There is no dependency or vulnerability scan yet.
 
 ## 29. Things the tests found along the way
 
@@ -569,3 +576,31 @@ The GitHub Actions workflow was checked with `actionlint` and its commands were 
 first. Its first real run, on the push of `main`, passed: lint, the tests on Python 3.11, 3.12 and
 3.13, and the Docker build with its container smoke test. The integration job was skipped, as
 designed.
+
+---
+
+# Review fixes
+
+## 37. Untrusted XML from upstream
+
+**Context.** zeep parses every SOAP response with lxml. Its defaults block entity declarations,
+but accept a `<!DOCTYPE>` and allow external fetches while parsing.
+
+**Decision.** `app/soap/client.py` passes explicit `zeep.Settings`: `forbid_dtd`,
+`forbid_entities` and `forbid_external` on, `strict` parsing, and libxml2's size limits kept
+(`xml_huge_tree=False`). SOAP messages must not contain a DOCTYPE anyway (SOAP 1.1, section 3),
+so a response with one is rejected as `upstream_bad_response` (502). Tests feed it an XXE
+payload, an entity expansion, an external DTD and a bare DOCTYPE, and check that nothing besides
+the SOAP call was requested.
+
+**Why explicit.** The security of the gateway should not depend on a library default that can
+change between releases, and the settings document the intent where the client is built.
+
+## 38. Incomplete upstream records are a 502, not a 500
+
+A record missing a required field (a continent without a name, say) used to make the Pydantic
+model raise inside the gateway, which reached the client as `500 internal_error`: a claim that
+*this* service has a bug. The gateway now maps such records to `UpstreamBadResponse`, logs the
+validation detail, and the client gets `502 upstream_bad_response`. The whole response is
+rejected rather than the bad record silently dropped, in line with entry 6: a gateway should not
+quietly rewrite its source's data.

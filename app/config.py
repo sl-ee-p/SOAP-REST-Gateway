@@ -5,7 +5,7 @@ Every tunable value lives here, so the rest of the code never reads os.environ d
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "soap-rest-gateway"
-    log_level: str = "INFO"
+    log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = "INFO"
 
     # Upstream SOAP service
     soap_wsdl_path: Path = DEFAULT_WSDL_PATH
@@ -40,7 +40,8 @@ class Settings(BaseSettings):
 
     # Security: comma-separated list in the environment, e.g. API_KEYS=key-one,key-two.
     # NoDecode stops pydantic-settings from expecting JSON, so the validator below can split it.
-    api_keys: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # repr=False keeps the keys out of any log line or traceback that prints the settings.
+    api_keys: Annotated[list[str], NoDecode] = Field(default_factory=list, repr=False)
 
     @field_validator("api_keys", mode="before")
     @classmethod
@@ -49,10 +50,10 @@ class Settings(BaseSettings):
             return [key.strip() for key in value.split(",") if key.strip()]
         return value
 
-    @field_validator("log_level")
+    @field_validator("log_level", mode="before")
     @classmethod
-    def _normalise_log_level(cls, value: str) -> str:
-        return value.upper()
+    def _normalise_log_level(cls, value: object) -> object:
+        return value.upper() if isinstance(value, str) else value
 
 
 @lru_cache

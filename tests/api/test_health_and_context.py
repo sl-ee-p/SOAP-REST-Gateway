@@ -51,6 +51,15 @@ def test_an_unsafe_incoming_request_id_is_replaced(client):
         assert response.headers["x-request-id"] != bad
 
 
+def test_a_request_id_with_a_trailing_newline_is_replaced():
+    # HTTP clients refuse to send this, so check the helper directly. A `^...$` regex would
+    # accept it, because `$` also matches just before a final newline.
+    from app.api.middleware import choose_request_id
+
+    assert choose_request_id("abc\n") != "abc\n"
+    assert choose_request_id("abc") == "abc"
+
+
 def test_access_log_has_request_id_key_id_and_cache_status_but_never_the_key(client, auth, caplog):
     with caplog.at_level(logging.INFO, logger="app.access"):
         client.get("/v1/continents", headers={**auth, "X-Request-ID": "log-test"})

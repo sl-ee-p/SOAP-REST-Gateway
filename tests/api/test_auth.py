@@ -66,3 +66,11 @@ def test_app_refuses_the_placeholder_key_from_env_example(settings):
     placeholder = settings.model_copy(update={"api_keys": ["change-me-to-a-long-random-key"]})
     with pytest.raises(RuntimeError, match="placeholder"):
         create_app(placeholder)
+
+
+def test_app_refuses_short_api_keys(settings):
+    from app.main import create_app
+
+    short = settings.model_copy(update={"api_keys": [*settings.api_keys, "short-key"]})
+    with pytest.raises(RuntimeError, match="at least 16 characters"):
+        create_app(short)
