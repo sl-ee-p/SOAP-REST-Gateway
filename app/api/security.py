@@ -4,7 +4,7 @@ import hashlib
 import hmac
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request, Response
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import APIKeyHeader
 
 # auto_error=False: we raise our own 401 so it uses the same problem+json format as the rest.
@@ -41,18 +41,19 @@ def require_api_key(
     return key_id
 
 
-def enforce_rate_limit(
-    request: Request, response: Response, key_id: Annotated[str, Depends(require_api_key)]
-) -> None:
+def enforce_rate_limit(request: Request, key_id: Annotated[str, Depends(require_api_key)]) -> None:
     result = request.app.state.rate_limiter.check(key_id)
     headers = {
         "X-RateLimit-Limit": str(result.limit),
         "X-RateLimit-Remaining": str(result.remaining),
     }
+    # The middleware adds these to whatever response this request ends with. A 404, 422 or
+    # 502 costs a token just like a 200, so the client must see its budget on those too
+    # (headers set on a dependency's `Response` only reach successful responses).
+    request.state.rate_limit_headers = headers
     if not result.allowed:
         raise HTTPException(
             status_code=429,
             detail="Rate limit exceeded. Retry after the number of seconds in Retry-After.",
             headers={**headers, "Retry-After": str(result.retry_after_seconds)},
         )
-    response.headers.update(headers)

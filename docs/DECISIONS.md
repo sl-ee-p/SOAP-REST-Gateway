@@ -342,7 +342,11 @@ variables are the simplest thing that is safe for a demo.
 **Decision.** `app/infra/ratelimit.py`. Each key has a bucket of `RATE_LIMIT_BURST` tokens (default
 20) that refills at `RATE_LIMIT_PER_MINUTE` (default 60) per minute. A request costs one token.
 When the bucket is empty the answer is `429 Too Many Requests` with a `Retry-After` header. Every
-successful response carries `X-RateLimit-Limit` and `X-RateLimit-Remaining`.
+response to an authenticated request carries `X-RateLimit-Limit` and `X-RateLimit-Remaining`,
+errors included: a 404 or a 502 costs a token too, so the client needs to see its budget there
+as well. The dependency leaves the values on the request and the middleware adds them to
+whatever response comes out, since headers set on a dependency's `Response` only reach
+successful responses.
 
 **Why a token bucket.** It allows short bursts (a page that fires 10 calls at once) while still
 enforcing the average rate. A fixed window ("60 per calendar minute") lets a client send 60 requests

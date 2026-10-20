@@ -47,6 +47,8 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                     request, 500, "internal_error", "An unexpected error occurred."
                 )
             response.headers[REQUEST_ID_HEADER] = request_id
+            # Set by the rate-limit dependency on authenticated requests, whatever the outcome.
+            response.headers.update(getattr(request.state, "rate_limit_headers", {}))
             if trace.status:
                 response.headers[CACHE_HEADER] = trace.status
             logger.info(

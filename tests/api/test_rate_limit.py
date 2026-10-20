@@ -9,6 +9,18 @@ def test_headers_report_the_remaining_budget(client, auth):
     assert second.headers["x-ratelimit-remaining"] == "1"
 
 
+def test_error_responses_report_the_budget_too(client, auth):
+    # A 404 (or 422, or 502) costs a token like a 200 does, so it must show the budget too.
+    response = client.get("/v1/countries/ZZ", headers=auth)
+    assert response.status_code == 404
+    assert response.headers["x-ratelimit-limit"] == "3"
+    assert response.headers["x-ratelimit-remaining"] == "2"
+
+
+def test_unauthenticated_responses_have_no_budget_headers(client):
+    assert "x-ratelimit-remaining" not in client.get("/v1/continents").headers
+
+
 def test_request_over_the_limit_gets_429_with_retry_after(client, auth):
     for _ in range(3):
         assert client.get("/v1/continents", headers=auth).status_code == 200
