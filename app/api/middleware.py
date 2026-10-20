@@ -19,6 +19,16 @@ REQUEST_ID_HEADER = "X-Request-ID"
 CACHE_HEADER = "X-Cache"
 # Accept a caller's id only if it is short and harmless (it ends up in logs and headers).
 _SAFE_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,128}")
+# Added to every response that doesn't set its own value.
+SECURITY_HEADERS = {
+    # Responses sit behind an API key and carry per-request values (rate-limit budget, request
+    # id), so browsers and proxies must not store them. The gateway caches upstream data itself.
+    "Cache-Control": "no-store",
+    # Never guess a different content type than the one declared.
+    "X-Content-Type-Options": "nosniff",
+    # The docs page has an input for the API key; it must not be shown inside another site.
+    "X-Frame-Options": "DENY",
+}
 
 
 def choose_request_id(incoming: str) -> str:
@@ -47,6 +57,8 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                     request, 500, "internal_error", "An unexpected error occurred."
                 )
             response.headers[REQUEST_ID_HEADER] = request_id
+            for name, value in SECURITY_HEADERS.items():
+                response.headers.setdefault(name, value)
             # Set by the rate-limit dependency on authenticated requests, whatever the outcome.
             response.headers.update(getattr(request.state, "rate_limit_headers", {}))
             if trace.status:

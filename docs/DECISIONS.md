@@ -656,3 +656,20 @@ report `unavailable` for a few more seconds, and the other way round. Orchestrat
 5-10 seconds and need several failures in a row before acting, so the delay is invisible to
 them. `0` restores a check on every probe. The probe still never reads the response cache, which
 could hide an outage for a whole TTL.
+
+## 41. Security headers on every response
+
+**Decision.** The request middleware adds three headers to every response that doesn't set
+its own value:
+
+| Header | Why |
+|---|---|
+| `Cache-Control: no-store` | `/v1` responses sit behind an API key, but `X-API-Key` is not `Authorization`, so a shared proxy may store a response and hand it to a client without a key. They also carry per-request values (rate-limit budget, request id). Reuse happens in the gateway's own cache (entry 22) instead. |
+| `X-Content-Type-Options: nosniff` | browsers must not guess a content type other than the declared JSON. |
+| `X-Frame-Options: DENY` | the docs page has an input for the API key, so it must not be framed by another site (clickjacking). |
+
+**Not added.** A strict `Content-Security-Policy` would break the Swagger UI page, which loads
+its scripts from a CDN. CORS stays off: browsers then block cross-origin calls, which is right
+for an API meant for servers. `ETag`s would save little, because the gateway's cache already
+makes repeat requests cheap. HSTS belongs to the TLS-terminating proxy, since the app itself
+only speaks plain HTTP.

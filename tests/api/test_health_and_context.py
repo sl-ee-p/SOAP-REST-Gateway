@@ -76,6 +76,19 @@ def test_access_log_has_request_id_key_id_and_cache_status_but_never_the_key(cli
     assert auth["X-API-Key"] not in json.dumps(record.__dict__, default=str)
 
 
+def test_security_headers_are_on_every_response(client, auth):
+    responses = [
+        client.get("/health"),
+        client.get("/v1/continents", headers=auth),
+        client.get("/v1/continents"),  # 401
+        client.get("/v1/countries/ZZ", headers=auth),  # 404
+    ]
+    for response in responses:
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["x-frame-options"] == "DENY"
+
+
 def test_openapi_documents_error_responses(client):
     spec = client.get("/openapi.json").json()
     responses = spec["paths"]["/v1/countries/{code}"]["get"]["responses"]
