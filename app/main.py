@@ -18,6 +18,7 @@ from app.domain.service import CountryService
 from app.infra.cache import Cache, InMemoryTTLCache
 from app.infra.cached_gateway import CachedCountryInfoGateway
 from app.infra.ratelimit import RateLimiter, TokenBucketRateLimiter
+from app.infra.readiness import ReadinessCheck
 from app.logging_config import configure_logging
 from app.soap.gateway import build_gateway
 
@@ -85,8 +86,11 @@ def create_app(
     app.state.service = CountryService(
         CachedCountryInfoGateway(gateway or build_gateway(settings), app.state.cache)
     )
-    app.state.health_gateway = gateway or build_gateway(
+    health_gateway = gateway or build_gateway(
         settings, timeout_seconds=settings.health_check_timeout_seconds, max_retries=0
+    )
+    app.state.readiness = ReadinessCheck(
+        health_gateway, reuse_seconds=settings.health_check_cache_seconds
     )
 
     app.add_middleware(RequestContextMiddleware)

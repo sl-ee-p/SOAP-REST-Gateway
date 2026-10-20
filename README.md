@@ -93,7 +93,7 @@ All `/v1` routes need the `X-API-Key` header. `/health`, `/health/ready` and `/d
 | `GET /v1/currencies` | List currencies |
 | `GET /v1/currencies/{code}/countries` | Countries that use a currency (`EUR`) |
 | `GET /health` | Liveness: the process is up (never calls upstream) |
-| `GET /health/ready` | Readiness: the upstream SOAP service answers (200 or 503) |
+| `GET /health/ready` | Readiness: the upstream SOAP service answers (200 or 503; checked at most every 5s) |
 
 ### Examples
 
@@ -168,6 +168,7 @@ Settings come from environment variables (or `.env`). Only `API_KEYS` is require
 | `SOAP_MAX_RETRIES` | `2` | Retries on timeouts and connection errors |
 | `SOAP_RETRY_BACKOFF_SECONDS` | `0.2` | Base delay for exponential backoff with jitter |
 | `HEALTH_CHECK_TIMEOUT_SECONDS` | `2` | Timeout of the readiness probe |
+| `HEALTH_CHECK_CACHE_SECONDS` | `5` | How long a readiness result is reused (`0` checks on every probe) |
 | `SOAP_ENDPOINT_URL` | the public service | Where SOAP calls are sent |
 | `LOG_LEVEL` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL` |
 

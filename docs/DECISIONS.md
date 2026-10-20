@@ -291,7 +291,8 @@ high concurrency, but it makes the code, retries and tests more complex. The thr
   is down, restarting our container would not help, so liveness must stay green.
 - `GET /health/ready` (readiness) answers "can we serve requests?" by making one cheap SOAP call,
   using its own gateway with a 2s timeout (`HEALTH_CHECK_TIMEOUT_SECONDS`) and no retries, so a
-  probe never hangs. It returns 200 `ready` or 503 `unavailable` with the error code.
+  probe never hangs. It returns 200 `ready` or 503 `unavailable` with the error code. The
+  result is reused for a few seconds (entry 40).
 
 Both are public (no API key): load balancers and orchestrators must be able to call them.
 
@@ -633,3 +634,21 @@ it can't grow. Waiters get their own copy of the list, like cache hits do.
 simpler, but after a failure each waiter would call upstream in turn, one after the other.
 Serving stale data while one request refreshes it ("stale-while-revalidate") would hide
 latency too, but it needs a second TTL and is more than this dataset needs.
+
+## 40. The public readiness probe can't be used to flood upstream
+
+**Context.** `/health/ready` needs no API key and isn't rate limited (entry 18), and every call
+made one SOAP request. Anyone could therefore make the gateway send upstream as many requests
+as they could send us, without a key, and during an outage each probe held a worker thread for
+the whole 2s timeout.
+
+**Decision.** `ReadinessCheck` (`app/infra/readiness.py`) reuses its last result for
+`HEALTH_CHECK_CACHE_SECONDS` (default 5), whether it was a success or a failure. Only one check
+runs at a time; probes that arrive during a check wait for it and share its result. Upstream
+now sees at most one readiness call every 5 seconds per process, however often it is probed.
+
+**Trade-off.** Readiness can lag by up to 5 seconds: after upstream recovers, the probe may
+report `unavailable` for a few more seconds, and the other way round. Orchestrators probe every
+5-10 seconds and need several failures in a row before acting, so the delay is invisible to
+them. `0` restores a check on every probe. The probe still never reads the response cache, which
+could hide an outage for a whole TTL.

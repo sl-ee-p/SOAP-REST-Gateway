@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     soap_retry_backoff_seconds: float = Field(default=0.2, ge=0)
     # The readiness probe must answer quickly, so it uses its own short timeout and no retries.
     health_check_timeout_seconds: float = Field(default=2.0, gt=0)
+    # The probe is public: its result is reused this long, so probes can't flood upstream.
+    health_check_cache_seconds: float = Field(default=5.0, ge=0)
 
     # Response cache (in-memory, per process). A TTL of 0 disables caching.
     cache_ttl_seconds: float = Field(default=300.0, ge=0)

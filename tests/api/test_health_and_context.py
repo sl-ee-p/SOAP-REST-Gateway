@@ -29,10 +29,16 @@ def test_liveness_stays_green_when_upstream_is_down(client, gateway):
     assert client.get("/health").status_code == 200
 
 
-def test_readiness_is_not_served_from_the_cache(client, gateway):
-    client.get("/health/ready")
+def test_readiness_does_not_use_the_response_cache(client, auth, gateway):
+    client.get("/v1/continents", headers=auth)  # continents are now in the response cache
     client.get("/health/ready")
     assert gateway.calls["list_continents"] == 2
+
+
+def test_readiness_result_is_reused_so_probes_cannot_flood_upstream(client, gateway):
+    # The probe is public. HEALTH_CHECK_CACHE_SECONDS (default 5) bounds the upstream calls.
+    assert all(client.get("/health/ready").status_code == 200 for _ in range(5))
+    assert gateway.calls["list_continents"] == 1
 
 
 def test_a_request_id_is_generated(client):

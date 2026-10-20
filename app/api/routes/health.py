@@ -4,7 +4,6 @@ from fastapi import APIRouter, Request, Response
 
 from app import __version__
 from app.api.schemas import Health, Readiness
-from app.domain.errors import UpstreamError
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -22,9 +21,9 @@ def liveness() -> Health:
     responses={503: {"model": Readiness, "description": "Upstream unavailable"}},
 )
 def readiness(request: Request, response: Response) -> Readiness:
-    try:
-        request.app.state.health_gateway.list_continents()
-    except UpstreamError as exc:
+    # Reused for HEALTH_CHECK_CACHE_SECONDS: this route is public, upstream is not ours.
+    error_code = request.app.state.readiness.check()
+    if error_code is not None:
         response.status_code = 503
-        return Readiness(status="unavailable", upstream=exc.code)
+        return Readiness(status="unavailable", upstream=error_code)
     return Readiness(status="ready", upstream="ok")
