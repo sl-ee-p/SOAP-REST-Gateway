@@ -6,6 +6,7 @@ methods could replace this one without touching the service.
 
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -22,7 +23,8 @@ class InMemoryTTLCache:
     """Thread-safe dict whose entries expire `ttl_seconds` after they were stored.
 
     Per-process only: with several workers or replicas each one has its own cache.
-    `max_entries` bounds memory; when full, expired entries go first, then the oldest.
+    `max_entries` bounds memory; when full, expired entries go first, then the least
+    recently used one.
     """
 
     def __init__(
@@ -34,7 +36,8 @@ class InMemoryTTLCache:
         self._ttl = ttl_seconds
         self._max_entries = max_entries
         self._clock = clock  # injectable so tests don't need to sleep
-        self._data: dict[str, tuple[float, Any]] = {}
+        # Ordered from least to most recently used: reads and writes move a key to the end.
+        self._data: OrderedDict[str, tuple[float, Any]] = OrderedDict()
         self._lock = threading.Lock()
 
     def get(self, key: str) -> Any | None:
@@ -46,13 +49,16 @@ class InMemoryTTLCache:
             if self._clock() >= expires_at:
                 del self._data[key]
                 return None
+            self._data.move_to_end(key)
             return value
 
     def set(self, key: str, value: Any) -> None:
         if self._ttl <= 0:  # TTL 0 disables caching
             return
         with self._lock:
-            if key not in self._data and len(self._data) >= self._max_entries:
+            if key in self._data:
+                self._data.move_to_end(key)
+            elif len(self._data) >= self._max_entries:
                 self._evict()
             self._data[key] = (self._clock() + self._ttl, value)
 
@@ -65,4 +71,4 @@ class InMemoryTTLCache:
         for key in [k for k, (expires_at, _) in self._data.items() if expires_at <= now]:
             del self._data[key]
         if len(self._data) >= self._max_entries:
-            del self._data[next(iter(self._data))]  # dicts keep insertion order: oldest first
+            self._data.popitem(last=False)  # the least recently used entry

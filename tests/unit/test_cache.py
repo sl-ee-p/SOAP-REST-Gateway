@@ -54,6 +54,28 @@ def test_full_cache_evicts_oldest_when_nothing_expired(clock: FakeClock):
     assert (cache.get("b"), cache.get("c")) == (2, 3)
 
 
+def test_full_cache_evicts_the_least_recently_used_entry(clock: FakeClock):
+    # A key that is read all the time (the country list) must not be evicted just because it
+    # was stored first, while a key read once (a single currency lookup) stays.
+    cache = InMemoryTTLCache(ttl_seconds=100, max_entries=2, clock=clock)
+    cache.set("popular", 1)
+    cache.set("once", 2)
+    assert cache.get("popular") == 1
+    cache.set("new", 3)
+    assert cache.get("once") is None
+    assert (cache.get("popular"), cache.get("new")) == (1, 3)
+
+
+def test_rewriting_a_key_makes_it_recently_used(clock: FakeClock):
+    cache = InMemoryTTLCache(ttl_seconds=100, max_entries=2, clock=clock)
+    cache.set("a", 1)
+    cache.set("b", 2)
+    cache.set("a", 10)  # e.g. a Cache-Control: no-cache refresh
+    cache.set("c", 3)
+    assert cache.get("b") is None
+    assert (cache.get("a"), cache.get("c")) == (10, 3)
+
+
 def test_overwriting_a_key_does_not_evict(clock: FakeClock):
     cache = InMemoryTTLCache(ttl_seconds=100, max_entries=2, clock=clock)
     cache.set("a", 1)

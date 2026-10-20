@@ -379,7 +379,10 @@ The business service doesn't know the cache exists.
 - The cache holds frozen models. Lists are copied on the way out so a caller can't change what
   is stored.
 - The cache is bounded (`CACHE_MAX_ENTRIES`, default 1024): when full, expired entries are
-  removed first, then the oldest one.
+  removed first, then the least recently used one. Evicting the *oldest* entry instead would
+  throw out the country list, which every list request reads, just because it was stored
+  first, while one-off lookups of unknown currency codes (cached as empty lists; there are
+  17,576 possible codes) fill the cache.
 - Everything is guarded by a lock, because requests run in several threads (see entry 17).
 - Concurrent misses on the same key are coalesced (entry 39), so a cold or just-expired key
   costs one upstream call, not one per waiting request.
