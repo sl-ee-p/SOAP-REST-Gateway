@@ -11,6 +11,16 @@ from pydantic import BaseModel, Field
 PROBLEM_MEDIA_TYPE = "application/problem+json"
 
 
+class FieldError(BaseModel):
+    """One invalid input value, in the `errors` list of a 422 problem."""
+
+    loc: list[str | int] = Field(
+        description="Where the value is: its location, then its name", examples=[["query", "limit"]]
+    )
+    msg: str = Field(examples=["Input should be less than or equal to 250"])
+    type: str = Field(description="Stable, machine-readable reason", examples=["less_than_equal"])
+
+
 class Problem(BaseModel):
     """Error body following RFC 9457 ("Problem Details for HTTP APIs")."""
 
@@ -21,7 +31,7 @@ class Problem(BaseModel):
     instance: str = Field(description="Path of the request", examples=["/v1/countries/ZZ"])
     code: str = Field(description="Stable, machine-readable error code", examples=["not_found"])
     request_id: str | None = Field(default=None, examples=["9f1c0a7e2b8d4c55a3e1f0b6c2d4e8a1"])
-    errors: list[dict[str, Any]] | None = Field(
+    errors: list[FieldError] | None = Field(
         default=None, description="Per-field validation errors (422 only)"
     )
 

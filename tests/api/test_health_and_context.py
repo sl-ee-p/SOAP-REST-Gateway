@@ -93,3 +93,8 @@ def test_openapi_documents_error_responses(client):
     spec = client.get("/openapi.json").json()
     responses = spec["paths"]["/v1/countries/{code}"]["get"]["responses"]
     assert {"200", "401", "404", "422", "429", "502", "503", "504"} <= set(responses)
+
+
+def test_openapi_describes_the_items_of_a_validation_error(client):
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    assert set(schemas["FieldError"]["properties"]) == {"loc", "msg", "type"}
