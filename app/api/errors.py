@@ -25,8 +25,11 @@ from app.domain.errors import (
 
 logger = logging.getLogger(__name__)
 
+# Looked up along the class hierarchy, so a new UpstreamError subclass is a 502 by default:
+# a failure upstream must never look like a bug in this service (500).
 STATUS_BY_ERROR: dict[type[DomainError], int] = {
     NotFound: 404,
+    UpstreamError: 502,
     UpstreamFault: 502,  # Bad Gateway: upstream answered, but with an error
     UpstreamBadResponse: 502,
     UpstreamUnavailable: 503,  # Service Unavailable: could not reach upstream

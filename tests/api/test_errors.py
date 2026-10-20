@@ -2,6 +2,7 @@ import pytest
 
 from app.domain.errors import (
     UpstreamBadResponse,
+    UpstreamError,
     UpstreamFault,
     UpstreamTimeout,
     UpstreamUnavailable,
@@ -30,6 +31,12 @@ def test_unknown_currency_is_404(client, auth):
 
 def test_unknown_route_is_a_problem_response_too(client, auth):
     assert_problem(client.get("/v1/nothing", headers=auth), 404, "not_found")
+
+
+def test_wrong_method_is_a_405_problem_with_allow(client, auth):
+    response = client.post("/v1/continents", headers=auth)
+    assert_problem(response, 405, "method_not_allowed")
+    assert "GET" in response.headers["allow"]
 
 
 @pytest.mark.parametrize(
@@ -63,6 +70,8 @@ def test_invalid_input_never_reaches_upstream(client, auth, gateway):
         (UpstreamBadResponse("x"), 502, "upstream_bad_response"),
         (UpstreamUnavailable("x"), 503, "upstream_unavailable"),
         (UpstreamTimeout("x"), 504, "upstream_timeout"),
+        # The base class: a future upstream error without its own entry is a 502 too.
+        (UpstreamError("x"), 502, "upstream_error"),
     ],
 )
 def test_upstream_failures_map_to_gateway_statuses(client, auth, gateway, error, status, code):

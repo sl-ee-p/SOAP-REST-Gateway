@@ -239,6 +239,11 @@ bug, returns `application/problem+json`:
 | upstream too slow | 504 Gateway Timeout | the standard status for exactly this case |
 | bug in our code | 500 | generic body; the traceback is only logged |
 
+The table is looked up along the class hierarchy, and the `UpstreamError` base class has its
+own entry (502), so an upstream error type added later can never come out as a 500 that blames
+this service. Unknown routes (404) and wrong methods (405, with `Allow`) use the same
+problem+json body.
+
 **Not leaking internals.** For upstream and unexpected errors, clients get a generic sentence.
 The real detail (SOAP operation name, fault text, traceback) goes to the logs under the same
 `request_id`. Internal details are useless to clients and can help an attacker.
