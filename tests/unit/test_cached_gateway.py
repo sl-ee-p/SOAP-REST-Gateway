@@ -1,3 +1,7 @@
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from app.domain.errors import NotFound, UpstreamTimeout
@@ -103,3 +107,53 @@ def test_works_without_a_request_trace(cached):
 
 def test_trace_status_is_none_when_cache_unused():
     assert CacheTrace().status is None
+
+
+# --- concurrent misses ("single flight") -----------------------------------------------------
+
+
+def run_concurrently(gateway: FakeGateway, call, threads: int = 5) -> list:
+    """Run `call` in several threads while the upstream method is held, then release it.
+
+    The upstream call blocks until every thread has had time to miss the cache, so without
+    coalescing each thread would reach upstream. Returns each thread's result or exception.
+    """
+    release = threading.Event()
+    original = gateway.list_countries
+
+    def slow_list_countries():
+        release.wait(5)
+        return original()
+
+    gateway.list_countries = slow_list_countries
+    with ThreadPoolExecutor(max_workers=threads) as pool:
+        futures = [pool.submit(call) for _ in range(threads)]
+        time.sleep(0.2)  # let every thread reach the cache before upstream answers
+        release.set()
+        return [f.exception() or f.result() for f in futures]
+
+
+def test_concurrent_misses_share_one_upstream_call(cached, gateway):
+    results = run_concurrently(gateway, cached.list_countries)
+    assert gateway.calls["list_countries"] == 1
+    assert all(result == results[0] and result for result in results)
+
+
+def test_concurrent_waiters_get_the_leaders_error(cached, gateway):
+    gateway.error = UpstreamTimeout("slow")
+    results = run_concurrently(gateway, cached.list_countries)
+    assert all(isinstance(result, UpstreamTimeout) for result in results)
+
+
+def test_a_failed_fetch_does_not_block_the_next_one(cached, gateway):
+    gateway.error = UpstreamTimeout("slow")
+    with pytest.raises(UpstreamTimeout):
+        cached.list_countries()
+    gateway.error = None
+    assert cached.list_countries()
+    assert gateway.calls["list_countries"] == 2
+
+
+def test_waiters_get_their_own_copy_of_the_list(cached, gateway):
+    first, second = run_concurrently(gateway, cached.list_countries, threads=2)
+    assert first == second and first is not second

@@ -381,12 +381,11 @@ The business service doesn't know the cache exists.
 - The cache is bounded (`CACHE_MAX_ENTRIES`, default 1024): when full, expired entries are
   removed first, then the oldest one.
 - Everything is guarded by a lock, because requests run in several threads (see entry 17).
+- Concurrent misses on the same key are coalesced (entry 39), so a cold or just-expired key
+  costs one upstream call, not one per waiting request.
 
-**Known limitations.**
-- In-memory and per process, like the rate limiter; the `Cache` Protocol (get/set/clear) is the
-  seam for Redis.
-- No request coalescing: if 10 requests miss at the same moment, 10 upstream calls happen
-  ("thundering herd"). With a 5 minute TTL and a tiny dataset this is acceptable.
+**Known limitation.** In-memory and per process, like the rate limiter; the `Cache` Protocol
+(get/set/clear) is the seam for Redis.
 
 ## 23. Cache bypass and visibility
 
@@ -604,3 +603,30 @@ model raise inside the gateway, which reached the client as `500 internal_error`
 validation detail, and the client gets `502 upstream_bad_response`. The whole response is
 rejected rather than the bad record silently dropped, in line with entry 6: a gateway should not
 quietly rewrite its source's data.
+
+---
+
+# Quality pass
+
+## 39. Concurrent cache misses share one upstream call
+
+**Context.** Entry 22 used to accept the "thundering herd": when a key was cold or had just
+expired, every request that arrived before the first answer called upstream too. With the
+country list that means up to 40 parallel `FullCountryInfoAllCountries` calls (one per worker
+thread, entry 17) against a slow sample service, exactly when it is most likely to struggle.
+
+**Decision.** `CachedCountryInfoGateway` keeps a small table of fetches in progress. The first
+request for a key (the leader) calls upstream; the others wait for its result instead of making
+their own call ("single flight"). If the leader fails, the waiters get the same error: upstream
+failed a moment ago, so calling it again at once would most likely fail too, and each waiter
+would sit through its own full retry cycle (up to about 15 seconds). Errors are still never
+cached, so the next request after a failure tries again.
+
+**Details.** Requests with `Cache-Control: no-cache` don't join a fetch in progress: they asked
+for their own fresh call. The fetch table only holds keys that are being fetched right now, so
+it can't grow. Waiters get their own copy of the list, like cache hits do.
+
+**Alternatives.** A per-key lock that makes the others wait and then re-read the cache is
+simpler, but after a failure each waiter would call upstream in turn, one after the other.
+Serving stale data while one request refreshes it ("stale-while-revalidate") would hide
+latency too, but it needs a second TTL and is more than this dataset needs.
