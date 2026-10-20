@@ -7,6 +7,7 @@ from pathlib import Path
 
 import requests
 import zeep
+from requests.adapters import HTTPAdapter
 from zeep.proxy import ServiceProxy
 from zeep.transports import Transport
 
@@ -26,6 +27,12 @@ XML_SETTINGS = zeep.Settings(
     xml_huge_tree=False,
 )
 
+# Every worker thread shares one session. FastAPI runs sync routes in a pool of 40 threads,
+# while requests keeps only 10 connections per host by default: under load the other calls
+# would open a new connection each time and throw it away afterwards (urllib3 logs a
+# "Connection pool is full" warning for every one).
+HTTP_POOL_SIZE = 40
+
 
 def build_service(
     wsdl_path: Path,
@@ -38,8 +45,13 @@ def build_service(
     The WSDL is read from a local file, so starting the app never needs the network. The
     endpoint address is set from configuration instead of trusting the URL inside the WSDL.
     """
+    if session is None:
+        session = requests.Session()
+        adapter = HTTPAdapter(pool_maxsize=HTTP_POOL_SIZE)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
     transport = Transport(
-        session=session or requests.Session(),
+        session=session,
         # Applies to each SOAP call (connect and read separately), not to loading the WSDL.
         operation_timeout=timeout_seconds,
     )

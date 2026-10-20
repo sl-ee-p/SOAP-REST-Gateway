@@ -17,7 +17,7 @@ from app.domain.errors import (
     UpstreamTimeout,
     UpstreamUnavailable,
 )
-from app.soap.client import build_service
+from app.soap.client import HTTP_POOL_SIZE, build_service
 from app.soap.gateway import SoapCountryInfoGateway, build_gateway
 
 ENDPOINT = "http://soap.test/CountryInfoService.wso"
@@ -288,6 +288,12 @@ def test_responses_with_a_dtd_are_rejected_without_resolving_anything(
         gateway.list_continents()
     assert "root:" not in str(caught.value.__cause__)  # /etc/passwd was never read
     assert len(rsps.calls) == 1  # only the SOAP call: nothing was fetched, nothing retried
+
+
+def test_the_session_keeps_a_connection_per_worker_thread():
+    service = build_service(DEFAULT_WSDL_PATH, ENDPOINT, timeout_seconds=1)
+    adapter = service._client.transport.session.get_adapter(ENDPOINT)
+    assert adapter._pool_maxsize == HTTP_POOL_SIZE == 40
 
 
 def test_the_client_uses_the_hardened_xml_settings():
