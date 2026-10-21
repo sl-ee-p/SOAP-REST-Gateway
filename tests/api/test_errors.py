@@ -101,3 +101,21 @@ def test_domain_error_without_a_mapping_is_a_500(client, auth, gateway):
 
     gateway.error = DomainError("unmapped")
     assert_problem(client.get("/v1/continents", headers=auth), 500, "internal_error")
+
+
+def test_error_responses_are_documented_as_problem_json_only(client):
+    paths = client.get("/openapi.json").json()["paths"]
+    checked = 0
+    for path, item in paths.items():
+        for operation in item.values():
+            for status, response in operation["responses"].items():
+                content = response["content"]
+                if status.startswith(("4", "5")) and path != "/health/ready":
+                    assert list(content) == ["application/problem+json"], (path, status)
+                    assert content["application/problem+json"]["schema"] == {
+                        "$ref": "#/components/schemas/Problem"
+                    }
+                    checked += 1
+                else:
+                    assert list(content) == ["application/json"], (path, status)
+    assert checked > 20

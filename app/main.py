@@ -3,6 +3,8 @@
 Run with:  uvicorn app.main:create_app --factory
 """
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.responses import RedirectResponse
 
@@ -10,7 +12,7 @@ from app import __version__
 from app.api.errors import register_exception_handlers
 from app.api.middleware import RequestContextMiddleware
 from app.api.routes import continents, countries, currencies, health
-from app.api.schemas import problem_responses
+from app.api.schemas import PROBLEM_MEDIA_TYPE, problem_responses
 from app.api.security import enforce_rate_limit
 from app.config import Settings, get_settings
 from app.domain.ports import CountryInfoGateway
@@ -48,6 +50,33 @@ TAGS = [
 ]
 
 
+class GatewayApp(FastAPI):
+    """FastAPI app whose OpenAPI document lists error schemas under problem+json only."""
+
+    def openapi(self) -> dict[str, Any]:
+        if self.openapi_schema is None:
+            schema = super().openapi()
+            _merge_problem_media_types(schema)
+        return self.openapi_schema or {}
+
+
+def _merge_problem_media_types(schema: dict[str, Any]) -> None:
+    """Move each error response's schema from application/json to application/problem+json.
+
+    FastAPI documents the `model` of an extra response under application/json, next to the
+    empty application/problem+json entry that `problem_responses` adds. Real error responses
+    only use problem+json. Responses with only application/json (readiness 503) are untouched.
+    """
+    for path_item in schema.get("paths", {}).values():
+        for operation in path_item.values():
+            for status, response in operation.get("responses", {}).items():
+                content = response.get("content", {})
+                if not status.startswith(("4", "5")):
+                    continue
+                if "application/json" in content and PROBLEM_MEDIA_TYPE in content:
+                    content[PROBLEM_MEDIA_TYPE] = content.pop("application/json")
+
+
 def create_app(
     settings: Settings | None = None,
     gateway: CountryInfoGateway | None = None,
@@ -70,7 +99,7 @@ def create_app(
             f"Every key in API_KEYS must be at least {MIN_API_KEY_LENGTH} characters long."
         )
 
-    app = FastAPI(
+    app = GatewayApp(
         title="SOAP → REST Gateway",
         version=__version__,
         description=DESCRIPTION,

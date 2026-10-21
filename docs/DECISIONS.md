@@ -256,9 +256,11 @@ problem+json body.
 The real detail (SOAP operation name, fault text, traceback) goes to the logs under the same
 `request_id`. Internal details are useless to clients and can help an attacker.
 
-**Known limitation.** FastAPI lists the error schema under both `application/problem+json` and
-`application/json` in the OpenAPI document. Real responses always use
-`application/problem+json`.
+**OpenAPI media type.** FastAPI files the `model` of an extra response under
+`application/json`, next to the empty `application/problem+json` entry that `problem_responses`
+adds. `GatewayApp` (`app/main.py`, a `FastAPI` subclass overriding `openapi()`) merges them on
+the first build, so every 4xx/5xx response is documented as `application/problem+json` only.
+The readiness 503 is a plain `Readiness` body and keeps `application/json`.
 
 ## 15. Validate at the edge, normalise for the user
 
