@@ -19,7 +19,6 @@ from tenacity import (
     RetryCallState,
     Retrying,
     retry_if_exception,
-    stop_after_attempt,
     wait_exponential_jitter,
 )
 from zeep import exceptions as zeep_exc
@@ -35,7 +34,7 @@ from app.domain.errors import (
     UpstreamUnavailable,
 )
 from app.domain.models import Continent, Country, CountrySummary, Currency, Language
-from app.soap.client import build_service
+from app.soap.client import MIN_ATTEMPT_TIMEOUT, build_service, timeout_cap_var
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +73,16 @@ class SoapCountryInfoGateway:
         service: ServiceProxy,
         max_retries: int = 2,
         backoff_seconds: float = 0.2,
+        total_timeout_seconds: float | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._service = service
         self._max_retries = max_retries
         self._backoff_seconds = backoff_seconds
+        self._total_timeout_seconds = total_timeout_seconds
+        self._clock = clock  # injectable so tests don't need to wait
+        self._sleep = sleep
 
     # --- public API (the CountryInfoGateway port) ---------------------------------------
 
@@ -129,8 +134,33 @@ class SoapCountryInfoGateway:
     def _call(self, operation: str, **params: Any) -> Any:
         """Invoke a SOAP operation with retries, logging and error translation."""
         method: Callable[..., Any] = getattr(self._service, operation)
+        deadline = (
+            None
+            if self._total_timeout_seconds is None
+            else self._clock() + self._total_timeout_seconds
+        )
+
+        def stop(state: RetryCallState) -> bool:
+            if state.attempt_number > self._max_retries:
+                return True
+            # Give up if the backoff plus a minimal attempt no longer fits in the budget.
+            return (
+                deadline is not None
+                and deadline - self._clock() - state.upcoming_sleep < MIN_ATTEMPT_TIMEOUT
+            )
+
+        def attempt(**kwargs: Any) -> Any:
+            if deadline is None:
+                return method(**kwargs)
+            token = timeout_cap_var.set(deadline - self._clock())
+            try:
+                return method(**kwargs)
+            finally:
+                timeout_cap_var.reset(token)
+
         retrying = Retrying(
-            stop=stop_after_attempt(self._max_retries + 1),
+            stop=stop,
+            sleep=self._sleep,
             # 0.2s, 0.4s, 0.8s ... plus random jitter so many clients don't retry in lockstep.
             wait=wait_exponential_jitter(
                 multiplier=self._backoff_seconds, jitter=self._backoff_seconds, max=2.0
@@ -141,7 +171,7 @@ class SoapCountryInfoGateway:
         )
         started = time.perf_counter()
         try:
-            result = retrying(method, **params)
+            result = retrying(attempt, **params)
         except Exception as exc:
             error = _translate(exc, operation)
             logger.warning(
@@ -233,4 +263,5 @@ def build_gateway(
         service,
         max_retries=settings.soap_max_retries if max_retries is None else max_retries,
         backoff_seconds=settings.soap_retry_backoff_seconds,
+        total_timeout_seconds=settings.soap_total_timeout_seconds,
     )

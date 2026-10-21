@@ -17,8 +17,9 @@ from app.domain.errors import (
     UpstreamTimeout,
     UpstreamUnavailable,
 )
-from app.soap.client import HTTP_POOL_SIZE, build_service
+from app.soap.client import HTTP_POOL_SIZE, build_service, timeout_cap_var
 from app.soap.gateway import SoapCountryInfoGateway, build_gateway
+from tests.fakes import FakeClock
 
 ENDPOINT = "http://soap.test/CountryInfoService.wso"
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "soap"
@@ -301,3 +302,76 @@ def test_the_client_uses_the_hardened_xml_settings():
     settings = service._client.settings
     assert settings.forbid_dtd and settings.forbid_entities and settings.forbid_external
     assert settings.strict and not settings.xml_huge_tree
+
+
+# --- overall deadline ----------------------------------------------------------------------
+
+
+class SlowService:
+    """Every call 'takes' min(timeout, cap) on a fake clock, then times out."""
+
+    def __init__(self, clock: FakeClock, timeout: float) -> None:
+        self.clock = clock
+        self.timeout = timeout
+        self.caps: list[float | None] = []
+
+    def ListOfContinentsByCode(self):  # noqa: N802 - mirrors the SOAP operation name
+        cap = timeout_cap_var.get()
+        self.caps.append(cap)
+        self.clock.advance(min(self.timeout, cap) if cap is not None else self.timeout)
+        raise requests.ReadTimeout()
+
+
+def test_total_timeout_caps_each_attempt_and_stops_retrying(clock):
+    service = SlowService(clock, timeout=4)
+    gateway = SoapCountryInfoGateway(
+        service, max_retries=5, backoff_seconds=0, total_timeout_seconds=10, clock=clock
+    )
+    with pytest.raises(UpstreamTimeout):
+        gateway.list_continents()
+    assert service.caps == [10, 6, 2]
+
+
+def test_no_retry_starts_when_the_backoff_would_use_up_the_budget(clock):
+    service = SlowService(clock, timeout=4)
+    sleeps: list[float] = []
+    gateway = SoapCountryInfoGateway(
+        service,
+        max_retries=5,
+        backoff_seconds=1.0,
+        total_timeout_seconds=5,
+        clock=clock,
+        sleep=sleeps.append,
+    )
+    with pytest.raises(UpstreamTimeout):
+        gateway.list_continents()
+    assert len(service.caps) == 1
+    assert sleeps == []
+
+
+def test_without_a_total_timeout_attempts_are_not_capped(clock):
+    service = SlowService(clock, timeout=4)
+    gateway = SoapCountryInfoGateway(service, max_retries=2, backoff_seconds=0, clock=clock)
+    with pytest.raises(UpstreamTimeout):
+        gateway.list_continents()
+    assert service.caps == [None, None, None]
+
+
+def test_the_cap_reaches_the_http_request_timeout(rsps, clock):
+    service = build_service(DEFAULT_WSDL_PATH, ENDPOINT, timeout_seconds=5)
+    gateway = SoapCountryInfoGateway(
+        service, max_retries=0, backoff_seconds=0, total_timeout_seconds=2, clock=clock
+    )
+    reply(rsps, "continents.xml")
+    gateway.list_continents()
+    assert rsps.calls[0].request.req_kwargs["timeout"] == 2
+
+
+def test_the_cap_never_raises_the_timeout(rsps, clock):
+    service = build_service(DEFAULT_WSDL_PATH, ENDPOINT, timeout_seconds=1)
+    gateway = SoapCountryInfoGateway(
+        service, max_retries=0, backoff_seconds=0, total_timeout_seconds=60, clock=clock
+    )
+    reply(rsps, "continents.xml")
+    gateway.list_continents()
+    assert rsps.calls[0].request.req_kwargs["timeout"] == 1

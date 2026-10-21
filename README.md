@@ -61,7 +61,7 @@ sequenceDiagram
         Cache-->>Svc: Country (X-Cache HIT)
     else miss, or client sent Cache-Control no-cache
         Cache->>Soap: get_country("IT")
-        loop first try plus up to SOAP_MAX_RETRIES on timeout or connection error
+        loop first try plus up to SOAP_MAX_RETRIES on timeout or connection error, within SOAP_TOTAL_TIMEOUT_SECONDS
             Soap->>Up: SOAP request (XML)
             Up-->>Soap: XML response, SOAP fault, or network error
         end
@@ -172,6 +172,7 @@ Settings come from environment variables (or `.env`). Only `API_KEYS` is require
 | `SOAP_TIMEOUT_SECONDS` | `5` | Timeout per SOAP call |
 | `SOAP_MAX_RETRIES` | `2` | Retries on timeouts and connection errors |
 | `SOAP_RETRY_BACKOFF_SECONDS` | `0.2` | Base delay for exponential backoff with jitter |
+| `SOAP_TOTAL_TIMEOUT_SECONDS` | `15` | Overall budget for one SOAP call, retries included: no new attempt starts if it cannot fit, and each attempt's timeout is capped to what is left |
 | `HEALTH_CHECK_TIMEOUT_SECONDS` | `2` | Timeout of the readiness probe |
 | `HEALTH_CHECK_CACHE_SECONDS` | `5` | How long a readiness result is reused (`0` checks on every probe) |
 | `SOAP_ENDPOINT_URL` | the public service | Where SOAP calls are sent |

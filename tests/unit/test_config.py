@@ -43,7 +43,12 @@ def test_api_keys_are_not_in_the_settings_repr():
 
 @pytest.mark.parametrize(
     "field, value",
-    [("soap_timeout_seconds", 0), ("soap_max_retries", 99), ("rate_limit_burst", 0)],
+    [
+        ("soap_timeout_seconds", 0),
+        ("soap_total_timeout_seconds", 0),
+        ("soap_max_retries", 99),
+        ("rate_limit_burst", 0),
+    ],
 )
 def test_invalid_values_fail_at_startup(field, value):
     with pytest.raises(ValidationError):

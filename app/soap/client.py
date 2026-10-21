@@ -3,7 +3,9 @@
 Only this module knows how zeep is configured: which WSDL file, which endpoint, which timeout.
 """
 
+from contextvars import ContextVar
 from pathlib import Path
+from typing import Any
 
 import requests
 import zeep
@@ -33,6 +35,24 @@ XML_SETTINGS = zeep.Settings(
 # "Connection pool is full" warning for every one).
 HTTP_POOL_SIZE = 40
 
+# Upper bound for the timeout of the next HTTP request, set by the gateway from what is left
+# of its overall deadline. A ContextVar, because zeep's Transport.operation_timeout is shared
+# by all worker threads and must not be changed per call.
+MIN_ATTEMPT_TIMEOUT = 0.1
+timeout_cap_var: ContextVar[float | None] = ContextVar("soap_timeout_cap", default=None)
+
+
+class CappedTimeoutSession(requests.Session):
+    """A session that never waits longer than the current call's remaining time budget."""
+
+    def request(self, *args: Any, **kwargs: Any) -> requests.Response:
+        cap = timeout_cap_var.get()
+        timeout = kwargs.get("timeout")
+        if cap is not None and timeout is not None:
+            # requests also accepts a (connect, read) tuple; zeep passes a single number.
+            kwargs["timeout"] = max(min(timeout, cap), MIN_ATTEMPT_TIMEOUT)
+        return super().request(*args, **kwargs)
+
 
 def build_service(
     wsdl_path: Path,
@@ -46,7 +66,7 @@ def build_service(
     endpoint address is set from configuration instead of trusting the URL inside the WSDL.
     """
     if session is None:
-        session = requests.Session()
+        session = CappedTimeoutSession()
         adapter = HTTPAdapter(pool_maxsize=HTTP_POOL_SIZE)
         session.mount("http://", adapter)
         session.mount("https://", adapter)

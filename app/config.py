@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     soap_timeout_seconds: float = Field(default=5.0, gt=0)
     soap_max_retries: int = Field(default=2, ge=0, le=5)
     soap_retry_backoff_seconds: float = Field(default=0.2, ge=0)
+    # Overall budget for one SOAP call including retries: no new attempt starts once it
+    # can't fit, and each attempt's timeout is capped to what is left.
+    soap_total_timeout_seconds: float = Field(default=15.0, gt=0)
     # The readiness probe must answer quickly, so it uses its own short timeout and no retries.
     health_check_timeout_seconds: float = Field(default=2.0, gt=0)
     # The probe is public: its result is reused this long, so probes can't flood upstream.

@@ -133,10 +133,18 @@ mentions HTTP statuses, and the routes never mention zeep.
   A SOAP Fault is the server deliberately refusing, so a retry would give the same answer.
 - Retrying is safe because every operation is a read (idempotent).
 
-**Trade-off.** In the worst case a request waits for `(retries + 1) × timeout` plus backoff
-(around 15s with the defaults). The timeout applies to the connect and read phases
-separately, so it is not a strict end-to-end deadline. For a public read-only API that is
-fine. A stricter service would add an overall deadline.
+**Overall deadline.** `SOAP_TOTAL_TIMEOUT_SECONDS` (default 15, today's documented worst
+case) bounds one SOAP call including retries. Before each retry the gateway checks that the
+backoff plus a minimal attempt still fits in what is left, and if not it gives up with the last
+error. Each attempt's timeout is also capped to the remaining budget, through a `ContextVar`
+read by a `requests.Session` subclass (zeep's `operation_timeout` is shared by all threads, so
+it can't be changed per call).
+
+**Trade-off.** The deadline decides whether another attempt starts and caps its timeout. It is
+not a hard wall-clock limit: `requests` timeouts are per phase (connect, and each wait between
+bytes), so a single attempt can still run past the budget, up to about twice its timeout. Without
+the deadline the worst case would be `(retries + 1) × timeout` plus backoff. A strict limit
+would need a watchdog thread or an async client (see entry 17).
 
 ## 9. Configuration through environment variables
 
