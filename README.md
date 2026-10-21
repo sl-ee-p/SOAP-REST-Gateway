@@ -121,15 +121,20 @@ $ curl -s -H "X-API-Key: $KEY" "localhost:8000/v1/currencies/EUR/countries?limit
 Caching and rate-limit headers. Add `Cache-Control: no-cache` to force fresh data:
 
 ```console
-$ curl -si -H "X-API-Key: $KEY" localhost:8000/v1/continents | grep -iE '^(x-cache|x-ratelimit|x-request)'
+$ curl -si -H "X-API-Key: $KEY" localhost:8000/v1/continents | grep -iE '^(cache-control|x-content-type|x-cache|x-ratelimit|x-request)'
+x-request-id: e1c8cec6c57140be849f7efc70a1e269
+cache-control: no-store
+x-content-type-options: nosniff
 x-ratelimit-limit: 20
 x-ratelimit-remaining: 15
-x-request-id: e1c8cec6c57140be849f7efc70a1e269
 x-cache: MISS
 
 $ curl -si -H "X-API-Key: $KEY" -H "Cache-Control: no-cache" localhost:8000/v1/continents | grep -i '^x-cache'
 x-cache: BYPASS
 ```
+
+Error responses (404, 422, 502, ...) carry the `X-RateLimit-*` headers too, as long as the
+request had a valid API key.
 
 ### Errors
 
@@ -148,7 +153,7 @@ $ curl -s -H "X-API-Key: $KEY" localhost:8000/v1/countries/ZZ
 | 404 | `not_found` | unknown country or currency |
 | 422 | `validation_error` | invalid input, with a per-field `errors` list |
 | 429 | `too_many_requests` | rate limit exceeded (see `Retry-After`) |
-| 502 | `upstream_fault` / `upstream_bad_response` | the SOAP service returned a fault or an invalid response |
+| 502 | `upstream_fault` / `upstream_bad_response` | the SOAP service returned a fault or an invalid response (or `upstream_error` for any other upstream failure) |
 | 503 | `upstream_unavailable` | the SOAP service cannot be reached |
 | 504 | `upstream_timeout` | the SOAP service did not answer in time, after retries |
 | 500 | `internal_error` | a bug; the details are only in the logs |

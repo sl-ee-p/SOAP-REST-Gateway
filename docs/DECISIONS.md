@@ -287,7 +287,8 @@ why the SOAP log lines still carry the request id.
 
 **Alternatives.** zeep has an `AsyncClient` (built on httpx). That would scale better under very
 high concurrency, but it makes the code, retries and tests more complex. The thread pool
-(40 threads by default) is more than enough for this service.
+(40 threads by default) is more than enough for this service. The shared `requests` session
+pools 40 connections (`HTTP_POOL_SIZE` in `app/soap/client.py`) to match the 40 worker threads.
 
 ## 18. Liveness vs readiness
 
