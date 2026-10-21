@@ -14,6 +14,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, TypeVar, cast
 
+from app.domain.errors import NotFound
 from app.domain.models import Continent, Country, CountrySummary, Currency
 from app.domain.ports import CountryInfoGateway
 from app.infra.cache import Cache
@@ -49,6 +50,13 @@ class CacheTrace:
 cache_trace_var: ContextVar[CacheTrace | None] = ContextVar("cache_trace", default=None)
 
 
+@dataclass(frozen=True)
+class _NotFound:
+    """Cached answer "upstream deliberately said this does not exist" (a short negative entry)."""
+
+    detail: str
+
+
 @dataclass
 class _Flight:
     """One upstream fetch in progress, which other requests for the same key wait for."""
@@ -59,9 +67,14 @@ class _Flight:
 
 
 class CachedCountryInfoGateway:
-    def __init__(self, inner: CountryInfoGateway, cache: Cache) -> None:
+    def __init__(
+        self, inner: CountryInfoGateway, cache: Cache, not_found_ttl_seconds: float = 60.0
+    ) -> None:
         self._inner = inner
         self._cache = cache
+        # "Not found" is an answer upstream gave on purpose, so it is cached, but only briefly:
+        # the data may appear soon. 0 disables it. Upstream failures are never cached.
+        self._not_found_ttl = not_found_ttl_seconds
         self._flights: dict[str, _Flight] = {}
         self._flights_lock = threading.Lock()
 
@@ -87,17 +100,27 @@ class CachedCountryInfoGateway:
         trace = cache_trace_var.get()
         if trace is not None and trace.bypass:
             # Skip the read, but still refresh the entry so the next normal request is fresh.
-            value = fetch()
-            self._cache.set(key, value)
-            return _copy(value)
+            return _copy(self._fetch_and_store(key, fetch))
         cached = self._cache.get(key)
         if cached is not None:
             if trace is not None:
                 trace.hits += 1
+            if isinstance(cached, _NotFound):
+                raise NotFound(cached.detail)
             return _copy(cached)
         if trace is not None:
             trace.misses += 1
         return _copy(self._fetch_once(key, fetch))
+
+    def _fetch_and_store(self, key: str, fetch: Callable[[], T]) -> T:
+        try:
+            value = fetch()  # upstream failures propagate and are never cached
+        except NotFound as exc:
+            if self._not_found_ttl > 0:
+                self._cache.set(key, _NotFound(exc.detail), ttl_seconds=self._not_found_ttl)
+            raise
+        self._cache.set(key, value)
+        return value
 
     def _fetch_once(self, key: str, fetch: Callable[[], T]) -> T:
         """Fetch and store `key`, unless another thread is already doing so: then wait for it.
@@ -118,8 +141,7 @@ class CachedCountryInfoGateway:
                 raise flight.error
             return cast(T, flight.value)
         try:
-            value = fetch()  # errors propagate and are never cached
-            self._cache.set(key, value)
+            value = self._fetch_and_store(key, fetch)
             flight.value = value
             return value
         except BaseException as exc:

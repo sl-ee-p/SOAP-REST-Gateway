@@ -41,9 +41,31 @@ def test_cache_is_shared_between_api_keys(client, auth, gateway):
     assert gateway.calls["list_continents"] == 1
 
 
-def test_errors_are_not_cached(client, auth, gateway):
-    assert client.get("/v1/countries/ZZ", headers=auth).status_code == 404
-    assert client.get("/v1/countries/ZZ", headers=auth).status_code == 404
+def test_not_found_is_cached_until_the_short_ttl(client, auth, gateway, clock):
+    first = client.get("/v1/countries/ZZ", headers=auth)
+    second = client.get("/v1/countries/ZZ", headers=auth)
+    assert (first.status_code, second.status_code) == (404, 404)
+    assert (first.headers["x-cache"], second.headers["x-cache"]) == ("MISS", "HIT")
+    assert second.json()["detail"] == "Country 'ZZ' was not found"
+    assert gateway.calls["get_country"] == 1
+    clock.advance(61)
+    assert client.get("/v1/countries/ZZ", headers=auth).headers["x-cache"] == "MISS"
+    assert gateway.calls["get_country"] == 2
+
+
+def test_no_cache_header_bypasses_a_cached_not_found(client, auth, gateway):
+    client.get("/v1/countries/ZZ", headers=auth)
+    bypass = client.get("/v1/countries/ZZ", headers={**auth, "Cache-Control": "no-cache"})
+    assert (bypass.status_code, bypass.headers["x-cache"]) == (404, "BYPASS")
+    assert gateway.calls["get_country"] == 2
+
+
+def test_upstream_failures_are_never_cached(client, auth, gateway):
+    from app.domain.errors import UpstreamTimeout
+
+    gateway.error = UpstreamTimeout("slow")
+    assert client.get("/v1/countries/IT", headers=auth).status_code == 504
+    assert client.get("/v1/countries/IT", headers=auth).status_code == 504
     assert gateway.calls["get_country"] == 2
 
 

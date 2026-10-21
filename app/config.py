@@ -37,6 +37,8 @@ class Settings(BaseSettings):
 
     # Response cache (in-memory, per process). A TTL of 0 disables caching.
     cache_ttl_seconds: float = Field(default=300.0, ge=0)
+    # How long "not found" answers (e.g. an unknown country code) are cached. 0 disables it.
+    cache_not_found_ttl_seconds: float = Field(default=60.0, ge=0)
     cache_max_entries: int = Field(default=1024, ge=1)
 
     # Rate limit per API key: sustained requests per minute, and how many may arrive at once.

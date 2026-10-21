@@ -166,6 +166,7 @@ Settings come from environment variables (or `.env`). Only `API_KEYS` is require
 |---|---|---|
 | `API_KEYS` | none | Comma-separated list of accepted keys (each at least 16 characters) |
 | `CACHE_TTL_SECONDS` | `300` | How long upstream data is cached (`0` disables it) |
+| `CACHE_NOT_FOUND_TTL_SECONDS` | `60` | How long "not found" answers (e.g. an unknown country code) are cached (`0` disables it) |
 | `CACHE_MAX_ENTRIES` | `1024` | Cache size limit |
 | `RATE_LIMIT_PER_MINUTE` | `60` | Sustained requests per minute, per key |
 | `RATE_LIMIT_BURST` | `20` | Requests a key may send at once |

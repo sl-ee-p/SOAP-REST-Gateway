@@ -394,7 +394,8 @@ The business service doesn't know the cache exists.
 **Details.**
 - Cache keys are shared by all API keys. The data is public and identical for everyone; there is
   nothing per-user in it.
-- Errors are never cached, so one failed call doesn't make the failure last for the TTL.
+- Upstream failures are never cached, so one failed call doesn't make the failure last for the
+  TTL. "Not found" is different: see entry 42.
 - The cache holds frozen models. Lists are copied on the way out so a caller can't change what
   is stored.
 - The cache is bounded (`CACHE_MAX_ENTRIES`, default 1024): when full, expired entries are
@@ -470,7 +471,7 @@ They are written around behaviour that matters, not around lines of code:
   are not (SOAP faults, 4xx), how many attempts are made, and what each failure becomes.
 - **Upstream quirks:** the "not found is a normal response" case, lower-case codes, the codeless
   currency, `None` instead of an empty list, empty strings becoming `null`.
-- **Cache:** hit, miss, bypass, TTL expiry, errors not cached, entries shared across filters and keys.
+- **Cache:** hit, miss, bypass, TTL expiry, upstream failures not cached, short-lived "not found" entries, entries shared across filters and keys.
 
 Coverage is a smoke alarm, not a goal: it stands at 100% (statements and branches), CI fails
 below 90%, and the number only means something because of the checks above.
@@ -687,3 +688,24 @@ its scripts from a CDN. CORS stays off: browsers then block cross-origin calls, 
 for an API meant for servers. `ETag`s would save little, because the gateway's cache already
 makes repeat requests cheap. HSTS belongs to the TLS-terminating proxy, since the app itself
 only speaks plain HTTP.
+
+## 42. Short negative cache for "not found"
+
+**Context.** `GET /v1/countries/ZZ` called upstream on every request, because `NotFound` was
+treated like any failure and never cached. Unknown codes are cheap to produce, so a client (or
+a typo in a loop) could send the same useless call upstream again and again.
+
+**Decision.** "Not found" is an answer upstream gave deliberately, not a failure, so it is a
+separate rule from entry 22's "errors are never cached". `CachedCountryInfoGateway` stores a
+frozen `_NotFound(detail)` marker for `CACHE_NOT_FOUND_TTL_SECONDS` (default 60; `0` disables
+it). A hit on a marker raises `NotFound` again and counts as a cache `HIT`. Both the bypass
+path and the single-flight leader use one `_fetch_and_store` helper, so `Cache-Control:
+no-cache` still goes upstream and replaces the marker (or the entry, if the country appeared).
+`UpstreamError`s stay uncached.
+
+To give the marker its own lifetime, `Cache.set` and `InMemoryTTLCache.set` take an optional
+`ttl_seconds` override. `CACHE_TTL_SECONDS=0` still disables all caching.
+
+**Trade-off.** A country that is added upstream stays "not found" for up to a minute (clients
+can bypass with `no-cache`). Markers share the bounded cache, so they can evict useful entries
+under a flood of random codes; LRU eviction keeps the popular country list in place.

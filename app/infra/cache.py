@@ -14,7 +14,7 @@ from typing import Any, Protocol
 class Cache(Protocol):
     def get(self, key: str) -> Any | None: ...
 
-    def set(self, key: str, value: Any) -> None: ...
+    def set(self, key: str, value: Any, ttl_seconds: float | None = None) -> None: ...
 
     def clear(self) -> None: ...
 
@@ -52,15 +52,19 @@ class InMemoryTTLCache:
             self._data.move_to_end(key)
             return value
 
-    def set(self, key: str, value: Any) -> None:
-        if self._ttl <= 0:  # TTL 0 disables caching
+    def set(self, key: str, value: Any, ttl_seconds: float | None = None) -> None:
+        """Store `value`. `ttl_seconds` overrides the default lifetime for this entry only."""
+        if self._ttl <= 0:  # TTL 0 disables caching, whatever a single entry asks for
+            return
+        ttl = self._ttl if ttl_seconds is None else ttl_seconds
+        if ttl <= 0:
             return
         with self._lock:
             if key in self._data:
                 self._data.move_to_end(key)
             elif len(self._data) >= self._max_entries:
                 self._evict()
-            self._data[key] = (self._clock() + self._ttl, value)
+            self._data[key] = (self._clock() + ttl, value)
 
     def clear(self) -> None:
         with self._lock:

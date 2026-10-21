@@ -7,7 +7,7 @@ import pytest
 from app.domain.errors import NotFound, UpstreamTimeout
 from app.infra.cache import InMemoryTTLCache
 from app.infra.cached_gateway import CachedCountryInfoGateway, CacheTrace, cache_trace_var
-from tests.fakes import FakeClock, FakeGateway
+from tests.fakes import FakeClock, FakeGateway, make_country
 
 
 @pytest.fixture
@@ -73,18 +73,56 @@ def test_country_lookups_are_cached_per_code_ignoring_case(cached, gateway):
     assert gateway.calls["get_country"] == 2
 
 
-def test_errors_are_not_cached(cached, gateway):
-    with pytest.raises(NotFound):
+def test_not_found_is_cached_briefly_then_fetched_again(cached, gateway, clock, trace):
+    with pytest.raises(NotFound) as first:
         cached.get_country("ZZ")
+    with pytest.raises(NotFound) as second:
+        cached.get_country("ZZ")
+    assert gateway.calls["get_country"] == 1
+    assert second.value.detail == first.value.detail == "Country 'ZZ' was not found"
+    assert (trace.misses, trace.hits) == (1, 1)
+    clock.advance(61)  # past the 60 s negative TTL, though within the normal 300 s one
     with pytest.raises(NotFound):
         cached.get_country("ZZ")
     assert gateway.calls["get_country"] == 2
+
+
+def test_not_found_ttl_zero_disables_the_negative_cache(gateway, clock):
+    cached = CachedCountryInfoGateway(
+        gateway, InMemoryTTLCache(ttl_seconds=60, clock=clock), not_found_ttl_seconds=0
+    )
+    for _ in range(2):
+        with pytest.raises(NotFound):
+            cached.get_country("ZZ")
+    assert gateway.calls["get_country"] == 2
+
+
+def test_bypass_still_calls_upstream_for_a_cached_not_found(cached, gateway, trace):
+    with pytest.raises(NotFound):
+        cached.get_country("ZZ")
+    trace.bypass = True
+    with pytest.raises(NotFound):
+        cached.get_country("ZZ")
+    assert gateway.calls["get_country"] == 2
+
+
+def test_a_country_that_appears_replaces_the_cached_not_found(cached, gateway, trace):
+    with pytest.raises(NotFound):
+        cached.get_country("ZZ")
+    gateway.countries.append(make_country("ZZ", "Zedland", "EU", "EUR"))
+    trace.bypass = True
+    assert cached.get_country("ZZ").code == "ZZ"
+    trace.bypass = False
+    assert cached.get_country("ZZ").code == "ZZ"
 
 
 def test_upstream_failure_is_not_cached_and_recovers(cached, gateway):
     gateway.error = UpstreamTimeout("slow")
     with pytest.raises(UpstreamTimeout):
         cached.list_countries()
+    with pytest.raises(UpstreamTimeout):
+        cached.list_countries()
+    assert gateway.calls["list_countries"] == 2
     gateway.error = None
     assert cached.list_countries()
 

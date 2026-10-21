@@ -84,7 +84,11 @@ def create_app(
         settings.rate_limit_per_minute, settings.rate_limit_burst
     )
     app.state.service = CountryService(
-        CachedCountryInfoGateway(gateway or build_gateway(settings), app.state.cache)
+        CachedCountryInfoGateway(
+            gateway or build_gateway(settings),
+            app.state.cache,
+            not_found_ttl_seconds=settings.cache_not_found_ttl_seconds,
+        )
     )
     health_gateway = gateway or build_gateway(
         settings, timeout_seconds=settings.health_check_timeout_seconds, max_retries=0

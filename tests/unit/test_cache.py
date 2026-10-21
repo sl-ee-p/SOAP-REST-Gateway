@@ -89,3 +89,24 @@ def test_clear_removes_everything(clock: FakeClock):
     cache.set("k", "v")
     cache.clear()
     assert cache.get("k") is None
+
+
+def test_per_entry_ttl_overrides_the_default(clock: FakeClock):
+    cache = InMemoryTTLCache(ttl_seconds=100, clock=clock)
+    cache.set("short", 1, ttl_seconds=5)
+    cache.set("normal", 2)
+    clock.advance(6)
+    assert cache.get("short") is None
+    assert cache.get("normal") == 2
+
+
+def test_per_entry_ttl_of_zero_stores_nothing(clock: FakeClock):
+    cache = InMemoryTTLCache(ttl_seconds=100, clock=clock)
+    cache.set("k", 1, ttl_seconds=0)
+    assert cache.get("k") is None
+
+
+def test_default_ttl_zero_disables_caching_even_with_a_per_entry_ttl(clock: FakeClock):
+    cache = InMemoryTTLCache(ttl_seconds=0, clock=clock)
+    cache.set("k", 1, ttl_seconds=30)
+    assert cache.get("k") is None
